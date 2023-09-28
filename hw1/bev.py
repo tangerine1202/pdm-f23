@@ -42,7 +42,7 @@ class Projection(object):
         t_front_W = np.array([[0], [1], [0]])
 
         t = t_bev_W - t_front_W
-        t = -t
+        # t = -t
         R_front_bev = np.array([
             [1, 0, 0],
             [0, np.cos(np.deg2rad(pitch)), -np.sin(np.deg2rad(pitch))],
@@ -64,8 +64,8 @@ class Projection(object):
 
         # FIXME: K
         K = np.array([
-            [alpha, 0, self.width / 2],
-            [0, beta, self.height / 2],
+            [-alpha, 0, self.width / 2],
+            [0, -beta, self.height / 2],
             [0, 0, 1]
         ])
         K_inv = np.linalg.inv(K)
@@ -155,7 +155,7 @@ def click_event(event, x, y, flags, params):
 
 if __name__ == "__main__":
 
-    pitch_ang = -90 + 180
+    pitch_ang = -90
 
     front_rgb = "bev_data/front1.png"
     top_rgb = "bev_data/bev1.png"
