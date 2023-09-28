@@ -1,7 +1,15 @@
 import cv2
 import numpy as np
+np.set_printoptions(precision=4, suppress=True)
 
-points = []
+points = [
+    # (143, 133),
+    # (394, 131),
+    # (256, 256),
+    # (138, 347),
+    # (399, 357),
+]
+
 
 class Projection(object):
 
@@ -21,9 +29,87 @@ class Projection(object):
             Project the top view pixels to the front view pixels.
             :return: New pixels on perspective(front) view image
         """
+        roll, pitch, yaw = phi, theta, gamma
 
         ### TODO ###
-        return new_pixels
+        # Assumption
+        # R, t - known pose between top view and front view
+        # K - known camera intrinsic matrix and it is the same for both top view and front view
+        # n_bev - the normal vector of the plane in bev view
+        # d_bev - the distance from the origin to the plane in bev view
+
+        t_bev_W = np.array([[0], [2.5], [0]])
+        t_front_W = np.array([[0], [1], [0]])
+
+        t = t_bev_W - t_front_W
+        t = -t
+        R_front_bev = np.array([
+            [1, 0, 0],
+            [0, np.cos(np.deg2rad(pitch)), -np.sin(np.deg2rad(pitch))],
+            [0, np.sin(np.deg2rad(pitch)), np.cos(np.deg2rad(pitch))]
+        ])
+        R_bev_front = R_front_bev.T
+
+        old_pixels = np.array(points).T
+        # homogeneous coordinates of old pixels
+        x_bev_h = np.vstack((old_pixels, np.full((1, old_pixels.shape[1]), 1)))
+        z_bev = t_bev_W[1]
+        z_front = t_front_W[1]
+        print('old_pixels_h\n', x_bev_h)
+
+        # 90 fov ~= 2.5m * 2
+        # 256px / 1m
+        alpha = self.width / 2
+        beta = self.height / 2
+
+        # FIXME: K
+        K = np.array([
+            [alpha, 0, self.width / 2],
+            [0, beta, self.height / 2],
+            [0, 0, 1]
+        ])
+        K_inv = np.linalg.inv(K)
+
+        X_bev_C = z_bev * K_inv @ x_bev_h
+        print('X_bev_C\n', X_bev_C)
+        X_front_C = R_bev_front @ X_bev_C + t
+        print('X_front_C from R,t\n', X_front_C)
+
+        # FIXME: hard code, watch out the direction of normal vector
+        n_bev_C = np.array([[0], [0], [1]])
+        # FIXME: hard code
+        d_bev_C = np.abs(n_bev_C.T @ X_bev_C[:, 0])
+        # print('n_bev_C.T @ X_bev_C[:, 0]\n', d_bev_C)
+        # print('t\n', t)
+        # print('t * n_bev_C.T / d_bev_C @ X_bev_C\n', t * n_bev_C.T / d_bev_C @ X_bev_C)
+
+        # X_front_C = (R_bev_front + t * n_bev_C.T / d_bev_C) @ X_bev_C
+        # print('X_front_C from H w/o K\n', X_front_C)
+
+        # X_front_C = z_bev * (R_bev_front + t * n_bev_C.T / d_bev_C) @ K_inv @ x_bev_h
+        # print('X_front_C from H with K_inv\n', X_front_C)
+
+        H = K @ (R_bev_front + t * n_bev_C.T / d_bev_C) @ K_inv
+        # scale factor, z_front * z_bev be will the best
+        s = z_bev
+        print('scale factor', s)
+
+        x_front_h = H @ x_bev_h
+        print('x_front_h w/o s\n', x_front_h)
+        x_front_h = s * H @ x_bev_h
+        print('x_front_h w/o scale\n', x_front_h)
+        x_front_h = x_front_h / x_front_h[2, :]
+        print('x_front_h\n', x_front_h)
+
+        # Move the origin from the center of image to the top-left corner
+        # x_front_h[0, :] += self.width / 2
+        # x_front_h[1, :] += self.height / 2
+        # print('x_front_h\n', x_front_h)
+
+        new_pixels = x_front_h[:2, :]
+        return new_pixels.T.astype(int)
+
+        return points
 
     def show_image(self, new_pixels, img_name='projection.png', color=(0, 0, 255), alpha=0.4):
         """
@@ -69,7 +155,7 @@ def click_event(event, x, y, flags, params):
 
 if __name__ == "__main__":
 
-    pitch_ang = -90
+    pitch_ang = -90 + 180
 
     front_rgb = "bev_data/front1.png"
     top_rgb = "bev_data/bev1.png"
