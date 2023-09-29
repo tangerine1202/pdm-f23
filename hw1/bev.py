@@ -1,14 +1,34 @@
 import cv2
 import numpy as np
-np.set_printoptions(precision=4, suppress=True)
 
-points = [
-    # (143, 133),
-    # (394, 131),
-    # (256, 256),
-    # (138, 347),
-    # (399, 357),
-]
+points = []
+
+
+def xyz2R(x_deg, y_deg, z_deg):
+    """
+    :param x_rot: rotation angle along x axis
+    :param y_rot: rotation angle along y axis
+    :param z_rot: rotation angle along z axis
+    """
+    x_rad, y_rad, z_rad = np.deg2rad(x_deg), np.deg2rad(y_deg), np.deg2rad(z_deg)
+
+    Rx = np.array([
+        [1, 0, 0],
+        [0, np.cos(x_rad), -np.sin(x_rad)],
+        [0, np.sin(x_rad), np.cos(x_rad)]
+    ])
+    Ry = np.array([
+        [np.cos(y_rad), 0, np.sin(y_rad)],
+        [0, 1, 0],
+        [-np.sin(y_rad), 0, np.cos(y_rad)]
+    ])
+    Rz = np.array([
+        [np.cos(z_rad), -np.sin(z_rad), 0],
+        [np.sin(z_rad), np.cos(z_rad), 0],
+        [0, 0, 1]
+    ])
+    R = Rz @ Ry @ Rx
+    return R
 
 
 class Projection(object):
@@ -23,93 +43,64 @@ class Projection(object):
         else:
             self.image = cv2.imread(image_path)
         self.height, self.width, self.channels = self.image.shape
+        self.points = points
 
     def top_to_front(self, theta=0, phi=0, gamma=0, dx=0, dy=0, dz=0, fov=90):
         """
             Project the top view pixels to the front view pixels.
             :return: New pixels on perspective(front) view image
-        """
-        roll, pitch, yaw = phi, theta, gamma
 
-        ### TODO ###
-        # Assumption
-        # R, t - known pose between top view and front view
-        # K - known camera intrinsic matrix and it is the same for both top view and front view
-        # n_bev - the normal vector of the plane in bev view
-        # d_bev - the distance from the origin to the plane in bev view
+            # Coordinate system
+            # Use right-hand coordinate system
+            # W - world coordinate system: (x, y, z) = (left, up, front)
+            # C - camera coordinate system: (x, y, z) = (right, down, front)
+            # Assumption
+            # R, t - known pose of top view and front view
+            # K - known camera intrinsic matrix and it is the same for both top view and front view
+            # n_bev_C - the normal vector of the plane in bev view
+            # d_bev_C - the distance from the origin to the plane in bev view
+        """
+
+        x_bev = np.array(self.points).T
+        x_bev_h = np.vstack((x_bev, np.full((1, x_bev.shape[1]), 1)))
 
         t_bev_W = np.array([[0], [2.5], [0]])
         t_front_W = np.array([[0], [1], [0]])
+        # Note: watch out the direction of normal vector
+        n_bev_C = np.array([[0], [0], [1]])
+        d_bev_C = t_bev_W[1]
 
-        t = t_bev_W - t_front_W
-        # t = -t
-        R_front_bev = np.array([
-            [1, 0, 0],
-            [0, np.cos(np.deg2rad(pitch)), -np.sin(np.deg2rad(pitch))],
-            [0, np.sin(np.deg2rad(pitch)), np.cos(np.deg2rad(pitch))]
-        ])
-        R_bev_front = R_front_bev.T
+        # translation from the the front camera to the bev camera
+        t_front_bev = t_bev_W - t_front_W
 
-        old_pixels = np.array(points).T
-        # homogeneous coordinates of old pixels
-        x_bev_h = np.vstack((old_pixels, np.full((1, old_pixels.shape[1]), 1)))
-        z_bev = t_bev_W[1]
-        z_front = t_front_W[1]
-        print('old_pixels_h\n', x_bev_h)
+        # rotation from the front camera to the bev camera
+        R_bev_front = xyz2R(theta, phi, gamma)
+        # rotation from the bev camera to the front camera
+        R_front_bev = R_bev_front.T
 
-        # 90 fov ~= 2.5m * 2
-        # 256px / 1m
-        alpha = self.width / 2
-        beta = self.height / 2
-
-        # FIXME: K
+        # focal_length * tan(fov / 2) = width / 2
+        fx = self.width / 2 / np.tan(np.deg2rad(fov / 2))
+        fy = self.height / 2 / np.tan(np.deg2rad(fov / 2))
+        cx = self.width / 2
+        cy = self.height / 2
         K = np.array([
-            [-alpha, 0, self.width / 2],
-            [0, -beta, self.height / 2],
+            [-fx, 0, cx],
+            [0, -fy, cy],
             [0, 0, 1]
         ])
         K_inv = np.linalg.inv(K)
 
-        X_bev_C = z_bev * K_inv @ x_bev_h
-        print('X_bev_C\n', X_bev_C)
-        X_front_C = R_bev_front @ X_bev_C + t
-        print('X_front_C from R,t\n', X_front_C)
+        # X_bev_C = z_bev * K_inv @ x_bev_h
+        # d_bev_C = n_bev_C.T @ X_bev_C[:, 0]
 
-        # FIXME: hard code, watch out the direction of normal vector
-        n_bev_C = np.array([[0], [0], [1]])
-        # FIXME: hard code
-        d_bev_C = np.abs(n_bev_C.T @ X_bev_C[:, 0])
-        # print('n_bev_C.T @ X_bev_C[:, 0]\n', d_bev_C)
-        # print('t\n', t)
-        # print('t * n_bev_C.T / d_bev_C @ X_bev_C\n', t * n_bev_C.T / d_bev_C @ X_bev_C)
-
-        # X_front_C = (R_bev_front + t * n_bev_C.T / d_bev_C) @ X_bev_C
-        # print('X_front_C from H w/o K\n', X_front_C)
-
-        # X_front_C = z_bev * (R_bev_front + t * n_bev_C.T / d_bev_C) @ K_inv @ x_bev_h
-        # print('X_front_C from H with K_inv\n', X_front_C)
-
-        H = K @ (R_bev_front + t * n_bev_C.T / d_bev_C) @ K_inv
-        # scale factor, z_front * z_bev be will the best
-        s = z_bev
-        print('scale factor', s)
+        H = K @ (R_front_bev + t_front_bev * n_bev_C.T / d_bev_C) @ K_inv
 
         x_front_h = H @ x_bev_h
-        print('x_front_h w/o s\n', x_front_h)
-        x_front_h = s * H @ x_bev_h
-        print('x_front_h w/o scale\n', x_front_h)
         x_front_h = x_front_h / x_front_h[2, :]
-        print('x_front_h\n', x_front_h)
+        x_front = x_front_h[:2, :]
 
-        # Move the origin from the center of image to the top-left corner
-        # x_front_h[0, :] += self.width / 2
-        # x_front_h[1, :] += self.height / 2
-        # print('x_front_h\n', x_front_h)
-
-        new_pixels = x_front_h[:2, :]
-        return new_pixels.T.astype(int)
-
-        return points
+        new_pixels = x_front.T.astype(int)
+        return new_pixels
 
     def show_image(self, new_pixels, img_name='projection.png', color=(0, 0, 255), alpha=0.4):
         """
