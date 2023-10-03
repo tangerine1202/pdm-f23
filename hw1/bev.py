@@ -62,7 +62,7 @@ class Projection(object):
         """
 
         x_bev = np.array(self.points).T
-        x_bev_h = np.vstack((x_bev, np.full((1, x_bev.shape[1]), 1)))
+        x_bev_h = np.vstack((x_bev, np.ones((1, x_bev.shape[1]))))
 
         t_bev_W = np.array([[0], [2.5], [0]])
         t_front_W = np.array([[0], [1], [0]])
