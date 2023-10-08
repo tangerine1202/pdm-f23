@@ -15,6 +15,9 @@ cy = height / 2
 K = np.array([[fx, 0, cx],
               [0, fy, cy],
               [0, 0, 1]])
+K_inv = np.array([[1/fx, 0, -cx/fx],
+                  [0, 1/fy, -cy/fy],
+                  [0, 0, 1]])
 # FIXME: what is the unit of depth_scale?
 DEPTH_SCALE = 1
 # scale ground truth translation to match the 3D scene
@@ -34,20 +37,41 @@ def rotation_matrix_to_quaternion(R):
     return np.asarray([w, x, y, z])
 
 
-def depth_image_to_point_cloud(rgb, depth):
+def depth_image_to_point_cloud(rgb, depth, method='my'):
     # ref: http://www.open3d.org/docs/release/tutorial/geometry/rgbd_image.html
     # Get point cloud from rgb and depth image
-    camera_intrinsic = o3d.camera.PinholeCameraIntrinsic(width=width, height=height, intrinsic_matrix=K)
-    rgbd_img = o3d.geometry.RGBDImage.create_from_color_and_depth(
-        rgb, depth, depth_scale=DEPTH_SCALE, convert_rgb_to_intensity=False)
-    pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_img, camera_intrinsic)
-    # Flip it, otherwise the pointcloud will be upside down
-    pcd.transform([
-        [1, 0, 0, 0],
-        [0, -1, 0, 0],
-        [0, 0, -1, 0],
-        [0, 0, 0, 1]]
-    )
+    if method == 'my':
+        z = np.array(depth).reshape(-1, 1) / 255 * DEPTH_SCALE  # (n, 1)
+        u, v = np.meshgrid(np.arange(width), np.arange(height))
+        u = u.reshape(-1, 1)  # (n, 1)
+        v = v.reshape(-1, 1)  # (n, 1)
+        x_h = np.concatenate([u, v, np.ones_like(u)], axis=1)  # (n, 3)
+        pts = z * (K_inv @ x_h.T).T  # (n, 3)
+
+        pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pts))
+        colors = np.array(rgb).reshape(-1, 3) / 255  # (n, 3)
+        pcd.colors = o3d.utility.Vector3dVector(colors)
+        # Flip it, otherwise the pointcloud will be upside down
+        pcd.transform([
+            [1, 0, 0, 0],
+            [0, -1, 0, 0],
+            [0, 0, -1, 0],
+            [0, 0, 0, 1]]
+        )
+    elif method == 'open3d':
+        camera_intrinsic = o3d.camera.PinholeCameraIntrinsic(width=width, height=height, intrinsic_matrix=K)
+        rgbd_img = o3d.geometry.RGBDImage.create_from_color_and_depth(
+            rgb, depth, depth_scale=DEPTH_SCALE, convert_rgb_to_intensity=False)
+        pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_img, camera_intrinsic)
+        # Flip it, otherwise the pointcloud will be upside down
+        pcd.transform([
+            [1, 0, 0, 0],
+            [0, -1, 0, 0],
+            [0, 0, -1, 0],
+            [0, 0, 0, 1]]
+        )
+    else:
+        raise NotImplementedError
     return pcd
 
 
@@ -105,8 +129,8 @@ def local_icp_algorithm(source_down, target_down, trans_init, threshold):
 
 def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_iter=30, relative_fitness=1e-3, relative_rmse=1e-3):
     # ref slides: https://cs.gmu.edu/~kosecka/cs685/cs685-icp.pdf
-    pts_src = np.array(source_down.points)  # N x 3
-    pts_tgt = np.array(target_down.points)  # M x 3
+    pts_src = np.array(source_down.points)  # n x 3
+    pts_tgt = np.array(target_down.points)  # m x 3
 
     # one-iter transformation
     T = trans_init
@@ -116,8 +140,9 @@ def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_
 
     prev_rmse = np.inf
     prev_fitness = 0
+    # for i in tqdm(range(max_iter)):
     for i in range(max_iter):
-        pts_src = (R @ pts_src.T).T + t  # N x 3
+        pts_src = (R @ pts_src.T).T + t  # n x 3
 
         # nearest matching
         tgt_ids = my_find_nearest_neighbors(pts_src, pts_tgt)
@@ -151,10 +176,10 @@ def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_
 
 
 def my_find_nearest_neighbors(src, tgt):
-    expanded_src = np.expand_dims(src, axis=1)  # N x 1 x 3
-    expanded_tgt = np.expand_dims(tgt, axis=0)  # 1 x M x 3
-    dist = np.linalg.norm(expanded_src - expanded_tgt, axis=2)  # N x M
-    tgt_ids = np.argmin(dist, axis=1)  # N
+    expanded_src = np.expand_dims(src, axis=1)  # n x 1 x 3
+    expanded_tgt = np.expand_dims(tgt, axis=0)  # 1 x m x 3
+    dist = np.linalg.norm(expanded_src - expanded_tgt, axis=2)  # n x m
+    tgt_ids = np.argmin(dist, axis=1)  # n
     return tgt_ids
 
 
@@ -175,13 +200,11 @@ def my_compute_transformation(src, tgt):
     # centroid (center of mass)
     centroid_src = np.mean(src, axis=0)  # 3
     centroid_dst = np.mean(tgt, axis=0)  # 3
-    centered_src = src - centroid_src  # N x 3
-    centered_dst = tgt - centroid_dst  # N x 3
-
+    centered_src = src - centroid_src  # n x 3
+    centered_dst = tgt - centroid_dst  # n x 3
     # SVD
     W = centered_dst.T @ centered_src   # 3 x 3
     U, _, Vt = np.linalg.svd(W)
-
     # transform
     R = U @ Vt
     t = centroid_dst - R @ centroid_src
