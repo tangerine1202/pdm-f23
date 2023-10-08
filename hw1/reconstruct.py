@@ -3,6 +3,7 @@ import open3d as o3d
 import copy
 import argparse
 import glob
+# import time
 # from tqdm.auto import tqdm
 # np.set_printoptions(suppress=True)
 
@@ -41,15 +42,16 @@ def depth_image_to_point_cloud(rgb, depth, method='my'):
     # ref: http://www.open3d.org/docs/release/tutorial/geometry/rgbd_image.html
     # Get point cloud from rgb and depth image
     if method == 'my':
+        colors = np.array(rgb).reshape(-1, 3) / 255  # (n, 3)
         z = np.array(depth).reshape(-1, 1) / 255 * DEPTH_SCALE  # (n, 1)
         u, v = np.meshgrid(np.arange(width), np.arange(height))
         u = u.reshape(-1, 1)  # (n, 1)
         v = v.reshape(-1, 1)  # (n, 1)
-        x_h = np.concatenate([u, v, np.ones_like(u)], axis=1)  # (n, 3)
-        pts = z * (K_inv @ x_h.T).T  # (n, 3)
+        x = (u - cx) * z / fx
+        y = (v - cy) * z / fy
+        pts = np.concatenate([x, y, z], axis=1)
 
         pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pts))
-        colors = np.array(rgb).reshape(-1, 3) / 255  # (n, 3)
         pcd.colors = o3d.utility.Vector3dVector(colors)
         # Flip it, otherwise the pointcloud will be upside down
         pcd.transform([
@@ -127,7 +129,7 @@ def local_icp_algorithm(source_down, target_down, trans_init, threshold):
     return result
 
 
-def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_iter=30, relative_fitness=1e-3, relative_rmse=1e-3):
+def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_iter=30, relative_fitness=1e-5, relative_rmse=1e-5):
     # ref slides: https://cs.gmu.edu/~kosecka/cs685/cs685-icp.pdf
     pts_src = np.array(source_down.points)  # n x 3
     pts_tgt = np.array(target_down.points)  # m x 3
@@ -316,7 +318,7 @@ if __name__ == '__main__':
     2. Red line: estimated camera pose
     3. Black line: ground truth camera pose
     '''
-    # ground truth trajectory
+    # Ground truth trajectory
     gt_points = gt_ts
     gt_lines = [[i, i+1] for i in range(len(gt_points)-1)]
     gt_colors = [[0, 0, 0] for i in range(len(gt_lines))]
@@ -337,7 +339,6 @@ if __name__ == '__main__':
     pred_lineset.colors = o3d.utility.Vector3dVector(pred_colors)
 
     # Masking out the ceiling
-
     ceiling_y_threshold = 0.0 * GT_T_SCALE
     ceiling_mask = np.array(result_pcd.points)[:, 1] < ceiling_y_threshold
     cropped_pcd = result_pcd.select_by_index(np.where(ceiling_mask)[0])
