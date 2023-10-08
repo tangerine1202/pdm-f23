@@ -47,6 +47,7 @@ def depth_image_to_point_cloud(rgb, depth, method='my'):
         u, v = np.meshgrid(np.arange(width), np.arange(height))
         u = u.reshape(-1, 1)  # (n, 1)
         v = v.reshape(-1, 1)  # (n, 1)
+        # NOTE: np.matmul (i.e. X = z * K_inv * [u, v, 1]) is slower than following codes
         x = (u - cx) * z / fx
         y = (v - cy) * z / fy
         pts = np.concatenate([x, y, z], axis=1)
@@ -82,11 +83,12 @@ def preprocess_point_cloud(pcd, voxel_size):
     # Do voxelization to reduce the number of points for less memory usage and speedup
     pcd_down = pcd.voxel_down_sample(voxel_size=voxel_size)
 
-    radius_normal = voxel_size * 2
+    # FIXME: tune the parameters here
+    radius_normal = voxel_size * 2  # 5 too large
     pcd_down.estimate_normals(
         o3d.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=30))
 
-    radius_feature = voxel_size * 5
+    radius_feature = voxel_size * 10
     pcd_fpfh = o3d.pipelines.registration.compute_fpfh_feature(
         pcd_down,
         o3d.geometry.KDTreeSearchParamHybrid(radius=radius_feature, max_nn=100))
@@ -99,7 +101,7 @@ def execute_global_registration(source_down, target_down, source_fpfh, target_fp
     result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
         source_down, target_down, source_fpfh, target_fpfh, True, distance_threshold,
         o3d.pipelines.registration.TransformationEstimationPointToPoint(False),
-        3,
+        6,  # tuned
         [
             o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
             o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(distance_threshold)
@@ -114,12 +116,17 @@ def execute_global_registration(source_down, target_down, source_fpfh, target_fp
     return result
 
 
-def local_icp_algorithm(source_down, target_down, trans_init, threshold):
+def local_icp_algorithm(source_down, target_down, trans_init, threshold, max_iter=30, relative_fitness=1e-6, relative_rmse=1e-6):
     # ref: http://www.open3d.org/docs/release/tutorial/pipelines/icp_registration.html
     # Use Open3D ICP function to implement
     reg_p2p = o3d.pipelines.registration.registration_icp(
         source_down, target_down, threshold, trans_init,
-        o3d.pipelines.registration.TransformationEstimationPointToPoint())
+        o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+        o3d.pipelines.registration.ICPConvergenceCriteria(
+            max_iteration=max_iter,
+            relative_fitness=relative_fitness,
+            relative_rmse=relative_rmse)
+    )
     # Point-to-plane is more accurate
     # reg_p2l = o3d.pipelines.registration.registration_icp(
     #     source_down, target_down, threshold, trans_init,
@@ -129,7 +136,7 @@ def local_icp_algorithm(source_down, target_down, trans_init, threshold):
     return result
 
 
-def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_iter=30, relative_fitness=1e-5, relative_rmse=1e-5):
+def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_iter=30, relative_fitness=1e-6, relative_rmse=1e-6):
     # ref slides: https://cs.gmu.edu/~kosecka/cs685/cs685-icp.pdf
     pts_src = np.array(source_down.points)  # n x 3
     pts_tgt = np.array(target_down.points)  # m x 3
@@ -143,18 +150,20 @@ def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_
     prev_rmse = np.inf
     prev_fitness = 0
     # for i in tqdm(range(max_iter)):
-    for i in range(max_iter):
+    for _ in range(max_iter):
         pts_src = (R @ pts_src.T).T + t  # n x 3
 
         # nearest matching
-        tgt_ids = my_find_nearest_neighbors(pts_src, pts_tgt)
-        pts_dst = pts_tgt[tgt_ids]
+        # FIXME: require Octree for faster nearest neighbor search
+        corrs = my_find_nearest_neighbors(pts_src, pts_tgt)
 
         # inlier selection
-        inlier_pts_src, inlier_pts_dst = my_inlier_selection(pts_src, pts_dst, threshold)
+        inlier_pts_src = pts_src[corrs[:, 0]]
+        inlier_pts_tgt = pts_tgt[corrs[:, 1]]
+        inlier_pts_src, inlier_pts_tgt = my_inlier_selection(inlier_pts_src, inlier_pts_tgt, threshold)
 
         # transformation estimation
-        R, t = my_compute_transformation(inlier_pts_src, inlier_pts_dst)
+        R, t = my_compute_transformation(inlier_pts_src, inlier_pts_tgt)
 
         # update
         T = np.eye(4)
@@ -163,8 +172,8 @@ def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_
         T_accu = T @ T_accu
 
         # check convergence
-        inlier_rmse = my_compute_rmse(inlier_pts_src, inlier_pts_dst)
-        fitness = len(np.unique(tgt_ids)) / len(pts_src)
+        inlier_rmse = my_compute_rmse(inlier_pts_src, inlier_pts_tgt)
+        fitness = len(inlier_pts_src) / len(pts_src)
         if (prev_rmse - inlier_rmse) < relative_rmse and (fitness - prev_fitness) < relative_fitness:
             break
         prev_rmse = inlier_rmse
@@ -181,8 +190,16 @@ def my_find_nearest_neighbors(src, tgt):
     expanded_src = np.expand_dims(src, axis=1)  # n x 1 x 3
     expanded_tgt = np.expand_dims(tgt, axis=0)  # 1 x m x 3
     dist = np.linalg.norm(expanded_src - expanded_tgt, axis=2)  # n x m
-    tgt_ids = np.argmin(dist, axis=1)  # n
-    return tgt_ids
+    # NOTE: each point has only one correct match,
+    #       so select min(n,m) is enough and also faster
+    if src.shape[0] < tgt.shape[0]:
+        tgt_ids = np.argmin(dist, axis=1)
+        corrs = np.stack([np.arange(src.shape[0]), tgt_ids], axis=1)  # n x 2
+    else:
+        src_ids = np.argmin(dist, axis=0)
+        corrs = np.stack([src_ids, np.arange(tgt.shape[0])], axis=1)  # m x 2
+
+    return corrs
 
 
 def my_compute_rmse(src, dst):
@@ -193,6 +210,9 @@ def my_compute_rmse(src, dst):
 def my_inlier_selection(src, tgt, threshold):
     dist = np.linalg.norm(src - tgt, axis=1)
     inlier_mask = dist < threshold
+    if inlier_mask.sum() < 3:
+        print('[Warning] inlier_mask.sum() < 3, please adjust the threshold')
+        return src, tgt
     inlier_src = src[inlier_mask]
     inlier_tgt = tgt[inlier_mask]
     return inlier_src, inlier_tgt
@@ -201,15 +221,15 @@ def my_inlier_selection(src, tgt, threshold):
 def my_compute_transformation(src, tgt):
     # centroid (center of mass)
     centroid_src = np.mean(src, axis=0)  # 3
-    centroid_dst = np.mean(tgt, axis=0)  # 3
+    centroid_tgt = np.mean(tgt, axis=0)  # 3
     centered_src = src - centroid_src  # n x 3
-    centered_dst = tgt - centroid_dst  # n x 3
+    centered_dst = tgt - centroid_tgt  # n x 3
     # SVD
     W = centered_dst.T @ centered_src   # 3 x 3
     U, _, Vt = np.linalg.svd(W)
     # transform
     R = U @ Vt
-    t = centroid_dst - R @ centroid_src
+    t = centroid_tgt - R @ centroid_src
     return R, t
 
 
@@ -226,14 +246,15 @@ def reconstruct(args):
     else:
         raise NotImplementedError
 
+    # mean_metrics = {}
     seq_len = len(glob.glob(f'{data_root}rgb/*.png'))
-
     T_0j = np.eye(4)
     poses = []
     merged_pcd = o3d.geometry.PointCloud()
     prev_down, prev_fpfh = None, None
     # for i in tqdm(range(1, seq_len+1)):
     for i in range(1, seq_len+1):
+        # metrics = {}
         rgb_img = o3d.io.read_image(f'{data_root}rgb/{i}.png')
         dep_img = o3d.io.read_image(f'{data_root}depth/{i}.png')
         now_pcd = depth_image_to_point_cloud(rgb_img, dep_img)
@@ -243,9 +264,13 @@ def reconstruct(args):
             # global registration
             reg_global = execute_global_registration(
                 now_down, prev_down, now_fpfh, prev_fpfh, voxel_size)
+            # metrics['reg_global_fitness'] = reg_global.fitness
+            # metrics['reg_global_inlier_rmse'] = reg_global.inlier_rmse
             # local registration
             reg_p2p = icp_algo(
-                now_down, prev_down, reg_global.transformation, threshold=voxel_size)
+                now_down, prev_down, reg_global.transformation, threshold=voxel_size, max_iter=50)
+            # metrics['reg_p2p_fitness'] = reg_p2p.fitness
+            # metrics['reg_p2p_inlier_rmse'] = reg_p2p.inlier_rmse
 
             # transform from now to previous
             T_ij = reg_p2p.transformation
@@ -266,6 +291,15 @@ def reconstruct(args):
 
         prev_down, prev_fpfh = now_down, now_fpfh
 
+    #     for k, v in metrics.items():
+    #         if k not in mean_metrics:
+    #             mean_metrics[k] = []
+    #         mean_metrics[k].append(v)
+
+    # for k, v in mean_metrics.items():
+    #     # print(f'{k}:\t{np.mean[k]:.6f}')
+    #     print(f'{k}:\t{np.sum(v):.6f}, {np.mean(v):.6f}')
+
     result_pcd = merged_pcd
     pred_cam_poses = np.array(poses)
     return result_pcd, pred_cam_poses
@@ -285,7 +319,7 @@ if __name__ == '__main__':
     parser.add_argument('-f', '--floor', type=int, default=1)
     parser.add_argument('-v', '--version', type=str, default='my_icp', help='open3d or my_icp')
     parser.add_argument('--data_root', type=str, default='data_collection/first_floor/')
-    parser.add_argument('--voxel_size', type=float, default=0.01)
+    parser.add_argument('--voxel_size', type=float, default=0.015)
     args = parser.parse_args()
 
     if args.floor == 1:
