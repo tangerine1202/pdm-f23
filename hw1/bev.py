@@ -55,24 +55,23 @@ class Projection(object):
             # W - world coordinate system: (x, y, z) = (left, up, front)
             # C - camera coordinate system: (x, y, z) = (right, down, front)
             # Assumption
-            # R, t - known pose of top view and front view
-            # K - known camera intrinsic matrix and it is the same for both top view and front view
-            # n_bev_C - the normal vector of the plane in bev view
-            # d_bev_C - the distance from the origin to the plane in bev view
+            # R, t - known poses of bev view and front view
+            # K - known camera intrinsic matrix and it is the same for both bev view and front view
+            # n_bev_C - known the normal vector of the plane where points lies on in the bev view
+            # d_bev_C - known the distance from the origin to the plane in bev view
         """
 
-        x_bev = np.array(self.points).T
-        x_bev_h = np.vstack((x_bev, np.ones((1, x_bev.shape[1]))))
+        x_bev = np.array(self.points).T  # (2, n)
+        x_bev_h = np.vstack((x_bev, np.ones((1, x_bev.shape[1]))))  # (3, n)
 
         t_bev_W = np.array([[0], [2.5], [0]])
         t_front_W = np.array([[0], [1], [0]])
         # Note: watch out the direction of normal vector
         n_bev_C = np.array([[0], [0], [1]])
-        d_bev_C = t_bev_W[1]
+        d_bev_C = t_bev_W[1]  # scalar
 
         # translation from the the front camera to the bev camera
         t_front_bev = t_bev_W - t_front_W
-
         # rotation from the front camera to the bev camera
         R_bev_front = xyz2R(theta, phi, gamma)
         # rotation from the bev camera to the front camera
@@ -89,9 +88,6 @@ class Projection(object):
             [0, 0, 1]
         ])
         K_inv = np.linalg.inv(K)
-
-        # X_bev_C = z_bev * K_inv @ x_bev_h
-        # d_bev_C = n_bev_C.T @ X_bev_C[:, 0]
 
         H = K @ (R_front_bev + t_front_bev * n_bev_C.T / d_bev_C) @ K_inv
 
