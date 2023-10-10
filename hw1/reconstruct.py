@@ -176,7 +176,6 @@ def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_
         pts_src = (R @ pts_src.T).T + t  # n x 3
 
         # nearest matching
-        # corrs = my_find_nearest_neighbors(pts_src, pts_tgt)
         corrs = my_find_nearest_neighbors_with_octree(pts_src, tgt_octree)
 
         # inlier selection
@@ -214,22 +213,6 @@ def my_find_nearest_neighbors_with_octree(src, octree):
     return corrs
 
 
-def my_find_nearest_neighbors(src, tgt):
-    expanded_src = np.expand_dims(src, axis=1)  # n x 1 x 3
-    expanded_tgt = np.expand_dims(tgt, axis=0)  # 1 x m x 3
-    dist = np.linalg.norm(expanded_src - expanded_tgt, axis=2)  # n x m
-    # NOTE: each point has only one correct match,
-    #       so select min(n,m) is enough and also faster
-    if src.shape[0] < tgt.shape[0]:
-        tgt_ids = np.argmin(dist, axis=1)
-        corrs = np.stack([np.arange(src.shape[0]), tgt_ids], axis=1)  # n x 2
-    else:
-        src_ids = np.argmin(dist, axis=0)
-        corrs = np.stack([src_ids, np.arange(tgt.shape[0])], axis=1)  # m x 2
-
-    return corrs
-
-
 def my_compute_rmse(src, dst):
     rmse = np.mean(np.linalg.norm(src - dst, axis=1))
     return rmse
@@ -262,9 +245,9 @@ def my_compute_transformation(src, tgt):
 
 
 class MyOcTreeNode():
-    def __init__(self, begin, end):
-        self.begin = begin
-        self.end = end
+    def __init__(self, min_corner, max_corner):
+        self.min_corner = min_corner
+        self.max_corner = max_corner
         self.points = np.empty((0, 3))
         self.ids = np.zeros((0), dtype=int)
         self.children = [None] * 8
@@ -282,8 +265,8 @@ class MyOcTree():
         if depth < self.max_depth:
             self.subdivide(node)
             for child in node.children:
-                child_begin, child_end = child.begin, child.end
-                masks = np.all(points >= child_begin, axis=1) & np.all(points < child_end, axis=1)
+                min_corner, max_corner = child.min_corner, child.max_corner
+                masks = np.all(points >= min_corner, axis=1) & np.all(points < max_corner, axis=1)
                 child_points = points[masks]
                 child_ids = ids[masks]
                 self.build_octree(child, depth + 1, child_points, child_ids)
@@ -292,41 +275,41 @@ class MyOcTree():
         for i in range(2):
             for j in range(2):
                 for k in range(2):
-                    child_begin = np.array([i, j, k]) * (node.end - node.begin) / 2 + node.begin
-                    child_end = np.array([i+1, j+1, k+1]) * (node.end - node.begin) / 2 + node.begin
+                    min_corner = np.array([i, j, k]) * (node.max_corner - node.min_corner) / 2 + node.min_corner
+                    max_corner = np.array([i+1, j+1, k+1]) * (node.max_corner - node.min_corner) / 2 + node.min_corner
                     child_idx = i*4 + j*2 + k
-                    child_node = MyOcTreeNode(child_begin, child_end)
+                    child_node = MyOcTreeNode(min_corner, max_corner)
                     node.children[child_idx] = child_node
 
     def find_batch_nearest_neighbor(self, points):
         tgt_ids = np.zeros(points.shape[0], dtype=int)
-        search_nodes = np.array([self.root] * points.shape[0])
+        nodes_to_search = np.array([self.root] * points.shape[0])
         masks = np.ones(points.shape[0], dtype=bool)
 
-        self._find_batch_nearest_neighbor(self.root, 0, points, masks, search_nodes)
+        self._find_batch_nearest_neighbor(self.root, 0, points, masks, nodes_to_search)
 
         # group points by search_nodes
-        counter = Counter(search_nodes)
-        for search_node in counter.keys():
-            search_masks = (search_nodes == search_node)
-            search_points = points[search_masks]
+        counter = Counter(nodes_to_search)
+        for node_to_search in counter.keys():
+            masks_to_search = (nodes_to_search == node_to_search)
+            points_to_search = points[masks_to_search]
 
             dist = np.linalg.norm(
-                np.expand_dims(search_points, axis=1) - np.expand_dims(search_node.points, axis=0),
+                np.expand_dims(points_to_search, axis=1) - np.expand_dims(node_to_search.points, axis=0),
                 axis=2
             )
             nearest_masks = np.argmin(dist, axis=1)
-            nearest_ids = search_node.ids[nearest_masks]
-            tgt_ids[search_masks] = nearest_ids
+            nearest_ids = node_to_search.ids[nearest_masks]
+            tgt_ids[masks_to_search] = nearest_ids
         return tgt_ids
 
-    def _find_batch_nearest_neighbor(self, node, depth, points, masks, search_nodes):
-        masks = masks & (np.all(points >= node.begin, axis=1) & np.all(points < node.end, axis=1))
-        search_nodes[masks] = node
+    def _find_batch_nearest_neighbor(self, node, depth, points, masks, nodes_to_search):
+        masks = masks & (np.all(points >= node.min_corner, axis=1) & np.all(points < node.max_corner, axis=1))
+        nodes_to_search[masks] = node
         if depth < self.max_depth:
             for child in node.children:
                 if len(child.points) > 0:
-                    self._find_batch_nearest_neighbor(child, depth+1, points, masks, search_nodes)
+                    self._find_batch_nearest_neighbor(child, depth+1, points, masks, nodes_to_search)
 
 
 def reconstruct(args):
@@ -460,10 +443,3 @@ if __name__ == '__main__':
     o3d.visualization.draw_geometries(
         [cropped_pcd, pred_lineset, gt_lineset],
     )
-
-    # result_down, _ = preprocess_point_cloud(result_pcd, voxel_size=0.005)
-    # ceiling_mask_down = np.array(result_down.points)[:, 1] < ceiling_y_threshold
-    # cropped_down = result_down.select_by_index(np.where(ceiling_mask_down)[0])
-    # o3d.visualization.draw_geometries(
-    #     [cropped_down, pred_lineset, gt_lineset],
-    # )
