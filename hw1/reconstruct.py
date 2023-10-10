@@ -5,6 +5,7 @@ import argparse
 import glob
 # import time
 # from tqdm.auto import tqdm
+from collections import Counter
 # np.set_printoptions(suppress=True)
 
 width, height = 512, 512
@@ -23,6 +24,14 @@ K_inv = np.array([[1/fx, 0, -cx/fx],
 DEPTH_SCALE = 1
 # scale ground truth translation to match the 3D scene
 GT_T_SCALE = 1/10
+
+
+# metrics = {
+#     'build_oct_time': 0,
+#     'nn_search_time': 0,
+#     'compt_dist_time': 0,
+#     'map_to_id_time': 0,
+# }
 
 
 def rotation_matrix_to_quaternion(R):
@@ -141,6 +150,19 @@ def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_
     pts_src = np.array(source_down.points)  # n x 3
     pts_tgt = np.array(target_down.points)  # m x 3
 
+    if len(pts_tgt) < 1000:
+        max_depth = 0
+    elif len(pts_tgt) < 3000:
+        max_depth = 1
+    elif len(pts_tgt) < 5000:
+        max_depth = 2
+    elif len(pts_tgt) < 10000:
+        max_depth = 3
+    else:
+        max_depth = 4
+    tgt_ids = np.arange(len(pts_tgt))
+    tgt_octree = MyOcTree(pts_tgt, tgt_ids, max_depth=max_depth)
+
     # one-iter transformation
     T = trans_init
     R, t = T[:3, :3], T[:3, 3]
@@ -154,8 +176,8 @@ def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_
         pts_src = (R @ pts_src.T).T + t  # n x 3
 
         # nearest matching
-        # FIXME: require Octree for faster nearest neighbor search
-        corrs = my_find_nearest_neighbors(pts_src, pts_tgt)
+        # corrs = my_find_nearest_neighbors(pts_src, pts_tgt)
+        corrs = my_find_nearest_neighbors_with_octree(pts_src, tgt_octree)
 
         # inlier selection
         inlier_pts_src = pts_src[corrs[:, 0]]
@@ -184,6 +206,12 @@ def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_
     result.fitness = fitness
     result.inlier_rmse = inlier_rmse
     return result
+
+
+def my_find_nearest_neighbors_with_octree(src, octree):
+    tgt_ids = octree.find_batch_nearest_neighbor(src)
+    corrs = np.vstack([np.arange(src.shape[0]), tgt_ids]).T  # n x 2
+    return corrs
 
 
 def my_find_nearest_neighbors(src, tgt):
@@ -233,6 +261,74 @@ def my_compute_transformation(src, tgt):
     return R, t
 
 
+class MyOcTreeNode():
+    def __init__(self, begin, end):
+        self.begin = begin
+        self.end = end
+        self.points = np.empty((0, 3))
+        self.ids = np.zeros((0), dtype=int)
+        self.children = [None] * 8
+
+
+class MyOcTree():
+    def __init__(self, points, ids, max_depth=3):
+        self.max_depth = max_depth
+        self.root = MyOcTreeNode(np.min(points, axis=0), np.max(points, axis=0))
+        self.build_octree(self.root, 0, points, ids)
+
+    def build_octree(self, node, depth, points, ids):
+        node.points = points.copy()
+        node.ids = ids.copy()
+        if depth < self.max_depth:
+            self.subdivide(node)
+            for child in node.children:
+                child_begin, child_end = child.begin, child.end
+                masks = np.all(points >= child_begin, axis=1) & np.all(points < child_end, axis=1)
+                child_points = points[masks]
+                child_ids = ids[masks]
+                self.build_octree(child, depth + 1, child_points, child_ids)
+
+    def subdivide(self, node):
+        for i in range(2):
+            for j in range(2):
+                for k in range(2):
+                    child_begin = np.array([i, j, k]) * (node.end - node.begin) / 2 + node.begin
+                    child_end = np.array([i+1, j+1, k+1]) * (node.end - node.begin) / 2 + node.begin
+                    child_idx = i*4 + j*2 + k
+                    child_node = MyOcTreeNode(child_begin, child_end)
+                    node.children[child_idx] = child_node
+
+    def find_batch_nearest_neighbor(self, points):
+        tgt_ids = np.zeros(points.shape[0], dtype=int)
+        search_nodes = np.array([self.root] * points.shape[0])
+        masks = np.ones(points.shape[0], dtype=bool)
+
+        self._find_batch_nearest_neighbor(self.root, 0, points, masks, search_nodes)
+
+        # group points by search_nodes
+        counter = Counter(search_nodes)
+        for search_node in counter.keys():
+            search_masks = (search_nodes == search_node)
+            search_points = points[search_masks]
+
+            dist = np.linalg.norm(
+                np.expand_dims(search_points, axis=1) - np.expand_dims(search_node.points, axis=0),
+                axis=2
+            )
+            nearest_masks = np.argmin(dist, axis=1)
+            nearest_ids = search_node.ids[nearest_masks]
+            tgt_ids[search_masks] = nearest_ids
+        return tgt_ids
+
+    def _find_batch_nearest_neighbor(self, node, depth, points, masks, search_nodes):
+        masks = masks & (np.all(points >= node.begin, axis=1) & np.all(points < node.end, axis=1))
+        search_nodes[masks] = node
+        if depth < self.max_depth:
+            for child in node.children:
+                if len(child.points) > 0:
+                    self._find_batch_nearest_neighbor(child, depth+1, points, masks, search_nodes)
+
+
 def reconstruct(args):
     # TODO: Return results
     data_root = args.data_root
@@ -246,7 +342,6 @@ def reconstruct(args):
     else:
         raise NotImplementedError
 
-    # mean_metrics = {}
     seq_len = len(glob.glob(f'{data_root}rgb/*.png'))
     T_0j = np.eye(4)
     poses = []
@@ -254,7 +349,6 @@ def reconstruct(args):
     prev_down, prev_fpfh = None, None
     # for i in tqdm(range(1, seq_len+1)):
     for i in range(1, seq_len+1):
-        # metrics = {}
         rgb_img = o3d.io.read_image(f'{data_root}rgb/{i}.png')
         dep_img = o3d.io.read_image(f'{data_root}depth/{i}.png')
         now_pcd = depth_image_to_point_cloud(rgb_img, dep_img)
@@ -264,13 +358,9 @@ def reconstruct(args):
             # global registration
             reg_global = execute_global_registration(
                 now_down, prev_down, now_fpfh, prev_fpfh, voxel_size)
-            # metrics['reg_global_fitness'] = reg_global.fitness
-            # metrics['reg_global_inlier_rmse'] = reg_global.inlier_rmse
             # local registration
             reg_p2p = icp_algo(
                 now_down, prev_down, reg_global.transformation, threshold=voxel_size, max_iter=50)
-            # metrics['reg_p2p_fitness'] = reg_p2p.fitness
-            # metrics['reg_p2p_inlier_rmse'] = reg_p2p.inlier_rmse
 
             # transform from now to previous
             T_ij = reg_p2p.transformation
@@ -291,15 +381,6 @@ def reconstruct(args):
 
         prev_down, prev_fpfh = now_down, now_fpfh
 
-    #     for k, v in metrics.items():
-    #         if k not in mean_metrics:
-    #             mean_metrics[k] = []
-    #         mean_metrics[k].append(v)
-
-    # for k, v in mean_metrics.items():
-    #     # print(f'{k}:\t{np.mean[k]:.6f}')
-    #     print(f'{k}:\t{np.sum(v):.6f}, {np.mean(v):.6f}')
-
     result_pcd = merged_pcd
     pred_cam_poses = np.array(poses)
     return result_pcd, pred_cam_poses
@@ -319,7 +400,7 @@ if __name__ == '__main__':
     parser.add_argument('-f', '--floor', type=int, default=1)
     parser.add_argument('-v', '--version', type=str, default='my_icp', help='open3d or my_icp')
     parser.add_argument('--data_root', type=str, default='data_collection/first_floor/')
-    parser.add_argument('--voxel_size', type=float, default=0.015)
+    parser.add_argument('--voxel_size', type=float, default=0.01)
     args = parser.parse_args()
 
     if args.floor == 1:
