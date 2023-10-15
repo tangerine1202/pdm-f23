@@ -1,11 +1,12 @@
-import numpy as np
-import open3d as o3d
 import copy
 import argparse
 import glob
-# import time
-# from tqdm.auto import tqdm
 from collections import Counter
+import time
+
+# from tqdm.auto import tqdm
+import open3d as o3d
+import numpy as np
 # np.set_printoptions(suppress=True)
 
 width, height = 512, 512
@@ -17,21 +18,13 @@ cy = height / 2
 K = np.array([[fx, 0, cx],
               [0, fy, cy],
               [0, 0, 1]])
-K_inv = np.array([[1/fx, 0, -cx/fx],
-                  [0, 1/fy, -cy/fy],
+K_inv = np.array([[1 / fx, 0, - cx / fx],
+                  [0, 1 / fy, - cy / fy],
                   [0, 0, 1]])
 # FIXME: what is the unit of depth_scale?
 DEPTH_SCALE = 1
 # scale ground truth translation to match the 3D scene
-GT_T_SCALE = 1/10
-
-
-# metrics = {
-#     'build_oct_time': 0,
-#     'nn_search_time': 0,
-#     'compt_dist_time': 0,
-#     'map_to_id_time': 0,
-# }
+GT_T_SCALE = 1 / 10
 
 
 def rotation_matrix_to_quaternion(R):
@@ -48,19 +41,22 @@ def rotation_matrix_to_quaternion(R):
 
 
 def depth_image_to_point_cloud(rgb, depth, method='my'):
-    # ref: http://www.open3d.org/docs/release/tutorial/geometry/rgbd_image.html
     # Get point cloud from rgb and depth image
     if method == 'my':
+        # normalize
         colors = np.array(rgb).reshape(-1, 3) / 255  # (n, 3)
         z = np.array(depth).reshape(-1, 1) / 255 * DEPTH_SCALE  # (n, 1)
+
+        # depth un-projection
+        # NOTE: X = (z @ K_inv @ pixels) is slower than the following implementation
         u, v = np.meshgrid(np.arange(width), np.arange(height))
         u = u.reshape(-1, 1)  # (n, 1)
         v = v.reshape(-1, 1)  # (n, 1)
-        # NOTE: np.matmul (i.e. X = z * K_inv * [u, v, 1]) is slower than following codes
         x = (u - cx) * z / fx
         y = (v - cy) * z / fy
         pts = np.concatenate([x, y, z], axis=1)
 
+        # wrap into open3d point cloud
         pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pts))
         pcd.colors = o3d.utility.Vector3dVector(colors)
         # Flip it, otherwise the pointcloud will be upside down
@@ -92,12 +88,13 @@ def preprocess_point_cloud(pcd, voxel_size):
     # Do voxelization to reduce the number of points for less memory usage and speedup
     pcd_down = pcd.voxel_down_sample(voxel_size=voxel_size)
 
-    # FIXME: tune the parameters here
-    radius_normal = voxel_size * 2  # 5 too large
+    # ref: http://www.open3d.org/docs/release/tutorial/pipelines/global_registration.html
+    # Compute normals and fpfh features for the global registration
+    radius_normal = voxel_size * 2
     pcd_down.estimate_normals(
         o3d.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=30))
 
-    radius_feature = voxel_size * 10
+    radius_feature = voxel_size * 5
     pcd_fpfh = o3d.pipelines.registration.compute_fpfh_feature(
         pcd_down,
         o3d.geometry.KDTreeSearchParamHybrid(radius=radius_feature, max_nn=100))
@@ -110,25 +107,19 @@ def execute_global_registration(source_down, target_down, source_fpfh, target_fp
     result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
         source_down, target_down, source_fpfh, target_fpfh, True, distance_threshold,
         o3d.pipelines.registration.TransformationEstimationPointToPoint(False),
-        6,  # tuned
+        3,
         [
             o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
             o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(distance_threshold)
         ],
         o3d.pipelines.registration.RANSACConvergenceCriteria(100000, 0.999))
-    # fast global registration
-    # distance_threshold = voxel_size * 0.5
-    # result = o3d.pipelines.registration.registration_fgr_based_on_feature_matching(
-    #     source_down, target_down, source_fpfh, target_fpfh,
-    #     o3d.pipelines.registration.FastGlobalRegistrationOption(
-    #         maximum_correspondence_distance=distance_threshold))
     return result
 
 
 def local_icp_algorithm(source_down, target_down, trans_init, threshold, max_iter=30, relative_fitness=1e-6, relative_rmse=1e-6):
     # ref: http://www.open3d.org/docs/release/tutorial/pipelines/icp_registration.html
     # Use Open3D ICP function to implement
-    reg_p2p = o3d.pipelines.registration.registration_icp(
+    result = o3d.pipelines.registration.registration_icp(
         source_down, target_down, threshold, trans_init,
         o3d.pipelines.registration.TransformationEstimationPointToPoint(),
         o3d.pipelines.registration.ICPConvergenceCriteria(
@@ -136,12 +127,6 @@ def local_icp_algorithm(source_down, target_down, trans_init, threshold, max_ite
             relative_fitness=relative_fitness,
             relative_rmse=relative_rmse)
     )
-    # Point-to-plane is more accurate
-    # reg_p2l = o3d.pipelines.registration.registration_icp(
-    #     source_down, target_down, threshold, trans_init,
-    #     o3d.pipelines.registration.TransformationEstimationPointToPlane()
-    # )
-    result = reg_p2p
     return result
 
 
@@ -169,8 +154,8 @@ def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_
     # accumulated transformation
     T_accu = np.array(T)
 
-    prev_rmse = np.inf
     prev_fitness = 0
+    prev_rmse = np.inf
     # for i in tqdm(range(max_iter)):
     for _ in range(max_iter):
         pts_src = (R @ pts_src.T).T + t  # n x 3
@@ -193,13 +178,14 @@ def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_
         T_accu = T @ T_accu
 
         # check convergence
-        inlier_rmse = my_compute_rmse(inlier_pts_src, inlier_pts_tgt)
         fitness = len(inlier_pts_src) / len(pts_src)
-        if (prev_rmse - inlier_rmse) < relative_rmse and (fitness - prev_fitness) < relative_fitness:
+        inlier_rmse = my_compute_rmse(inlier_pts_src, inlier_pts_tgt)
+        if (fitness - prev_fitness) < relative_fitness and (prev_rmse - inlier_rmse) < relative_rmse:
             break
         prev_rmse = inlier_rmse
         prev_fitness = fitness
 
+    # wrap into open3d registration result
     result = o3d.pipelines.registration.RegistrationResult()
     result.transformation = T_accu
     result.fitness = fitness
@@ -236,6 +222,7 @@ def my_compute_transformation(src, tgt):
     centered_src = src - centroid_src  # n x 3
     centered_dst = tgt - centroid_tgt  # n x 3
     # SVD
+    # NOTE: due to the matrix shape, the transpose is different from the formula
     W = centered_dst.T @ centered_src   # 3 x 3
     U, _, Vt = np.linalg.svd(W)
     # transform
@@ -276,46 +263,52 @@ class MyOcTree():
             for j in range(2):
                 for k in range(2):
                     min_corner = np.array([i, j, k]) * (node.max_corner - node.min_corner) / 2 + node.min_corner
-                    max_corner = np.array([i+1, j+1, k+1]) * (node.max_corner - node.min_corner) / 2 + node.min_corner
-                    child_idx = i*4 + j*2 + k
+                    max_corner = np.array([i + 1, j + 1, k + 1]) * (node.max_corner -
+                                                                    node.min_corner) / 2 + node.min_corner
+                    child_idx = i * 4 + j * 2 + k
                     child_node = MyOcTreeNode(min_corner, max_corner)
                     node.children[child_idx] = child_node
 
     def find_batch_nearest_neighbor(self, points):
+        # initialize corresponding nodes with root
+        corr_nodes = np.array([self.root] * points.shape[0])
+        in_cuboid_masks = np.ones(points.shape[0], dtype=bool)
+        self._find_batch_nearest_neighbor(self.root, 0, points, in_cuboid_masks, corr_nodes)
+
         tgt_ids = np.zeros(points.shape[0], dtype=int)
-        nodes_to_search = np.array([self.root] * points.shape[0])
-        masks = np.ones(points.shape[0], dtype=bool)
+        # group points by corresponding nodes
+        corr_nodes_counter = Counter(corr_nodes)
+        for node_to_search in corr_nodes_counter.keys():
+            # select points with the corresponding node
+            corr_masks = (corr_nodes == node_to_search)
+            corr_points = points[corr_masks]
 
-        self._find_batch_nearest_neighbor(self.root, 0, points, masks, nodes_to_search)
-
-        # group points by search_nodes
-        counter = Counter(nodes_to_search)
-        for node_to_search in counter.keys():
-            masks_to_search = (nodes_to_search == node_to_search)
-            points_to_search = points[masks_to_search]
-
+            # find nearest neighbor
             dist = np.linalg.norm(
-                np.expand_dims(points_to_search, axis=1) - np.expand_dims(node_to_search.points, axis=0),
+                np.expand_dims(corr_points, axis=1) - np.expand_dims(node_to_search.points, axis=0),
                 axis=2
             )
             nearest_masks = np.argmin(dist, axis=1)
             nearest_ids = node_to_search.ids[nearest_masks]
-            tgt_ids[masks_to_search] = nearest_ids
+            tgt_ids[corr_masks] = nearest_ids
         return tgt_ids
 
-    def _find_batch_nearest_neighbor(self, node, depth, points, masks, nodes_to_search):
-        masks = masks & (np.all(points >= node.min_corner, axis=1) & np.all(points < node.max_corner, axis=1))
-        nodes_to_search[masks] = node
+    def _find_batch_nearest_neighbor(self, node, depth, points, in_cuboid_masks, corr_nodes):
+        in_cuboid_masks = in_cuboid_masks & (np.all(points >= node.min_corner, axis=1)
+                                             & np.all(points < node.max_corner, axis=1))
+        # update the correspondence node
+        corr_nodes[in_cuboid_masks] = node
         if depth < self.max_depth:
             for child in node.children:
                 if len(child.points) > 0:
-                    self._find_batch_nearest_neighbor(child, depth+1, points, masks, nodes_to_search)
+                    self._find_batch_nearest_neighbor(child, depth + 1, points, in_cuboid_masks, corr_nodes)
 
 
 def reconstruct(args):
     # TODO: Return results
     data_root = args.data_root
     voxel_size = args.voxel_size
+    use_global_registration = (args.global_registration == 'y')
 
     icp_algo = None
     if args.version == 'open3d':
@@ -331,7 +324,7 @@ def reconstruct(args):
     merged_pcd = o3d.geometry.PointCloud()
     prev_down, prev_fpfh = None, None
     # for i in tqdm(range(1, seq_len+1)):
-    for i in range(1, seq_len+1):
+    for i in range(1, seq_len + 1):
         rgb_img = o3d.io.read_image(f'{data_root}rgb/{i}.png')
         dep_img = o3d.io.read_image(f'{data_root}depth/{i}.png')
         now_pcd = depth_image_to_point_cloud(rgb_img, dep_img)
@@ -339,11 +332,14 @@ def reconstruct(args):
 
         if prev_down is not None:
             # global registration
-            reg_global = execute_global_registration(
-                now_down, prev_down, now_fpfh, prev_fpfh, voxel_size)
+            trans_init = np.identity(4)
+            if use_global_registration:
+                reg_global = execute_global_registration(
+                    now_down, prev_down, now_fpfh, prev_fpfh, voxel_size)
+                trans_init = reg_global.transformation
             # local registration
             reg_p2p = icp_algo(
-                now_down, prev_down, reg_global.transformation, threshold=voxel_size, max_iter=50)
+                now_down, prev_down, trans_init, threshold=voxel_size, max_iter=50)
 
             # transform from now to previous
             T_ij = reg_p2p.transformation
@@ -384,6 +380,7 @@ if __name__ == '__main__':
     parser.add_argument('-v', '--version', type=str, default='my_icp', help='open3d or my_icp')
     parser.add_argument('--data_root', type=str, default='data_collection/first_floor/')
     parser.add_argument('--voxel_size', type=float, default=0.01)
+    parser.add_argument('--global_registration', type=str, default='y', help='y or n')
     args = parser.parse_args()
 
     if args.floor == 1:
@@ -392,18 +389,21 @@ if __name__ == '__main__':
         args.data_root = "data_collection/second_floor/"
 
     # TODO: Output result point cloud and estimated camera pose
+    t0 = time.time()
     result_pcd, pred_poses = reconstruct(args)
+    print(f"Reconstruction time: {time.time() - t0:.4f}s")
 
     # TODO: Calculate and print L2 distance
     '''
     Hint: Mean L2 distance = mean(norm(ground truth - estimated camera trajectory))
     '''
-    # ground truth translation
+    # Predicted camera position
+    pred_ts = pred_poses[:, :3]
+    # Ground truth camera position
     gt_poses = np.load(f'{args.data_root}GT_pose.npy')
     gt_ts = gt_poses[:, :3]
+    # Align the ground truth with the predicted ones
     gt_ts = (gt_ts - gt_ts[0]) * GT_T_SCALE
-    # predicted translation
-    pred_ts = pred_poses[:, :3]
     # L2 distance
     l2_distances = np.linalg.norm(gt_ts - pred_ts, axis=1)
     mean_l2_distance = np.mean(l2_distances)
@@ -416,20 +416,22 @@ if __name__ == '__main__':
     2. Red line: estimated camera pose
     3. Black line: ground truth camera pose
     '''
-    # Ground truth trajectory
+    # Line of the ground truth trajectory
     gt_points = gt_ts
-    gt_lines = [[i, i+1] for i in range(len(gt_points)-1)]
-    gt_colors = [[0, 0, 0] for i in range(len(gt_lines))]
+    gt_color = [0, 0, 0]
+    gt_lines = [[i, i + 1] for i in range(len(gt_points) - 1)]
+    gt_colors = [gt_color for i in range(len(gt_lines))]
     gt_lineset = o3d.geometry.LineSet(
         points=o3d.utility.Vector3dVector(gt_points),
         lines=o3d.utility.Vector2iVector(gt_lines),
     )
     gt_lineset.colors = o3d.utility.Vector3dVector(gt_colors)
 
-    # predicted trajectory
+    # Line of the predicted trajectory
     pred_points = pred_ts
-    pred_lines = [[i, i+1] for i in range(len(pred_points)-1)]
-    pred_colors = [[1, 0, 0] for i in range(len(pred_lines))]
+    pred_color = [1, 0, 0]
+    pred_lines = [[i, i + 1] for i in range(len(pred_points) - 1)]
+    pred_colors = [pred_color for i in range(len(pred_lines))]
     pred_lineset = o3d.geometry.LineSet(
         points=o3d.utility.Vector3dVector(pred_points),
         lines=o3d.utility.Vector2iVector(pred_lines),
@@ -440,6 +442,8 @@ if __name__ == '__main__':
     ceiling_y_threshold = 0.0 * GT_T_SCALE
     ceiling_mask = np.array(result_pcd.points)[:, 1] < ceiling_y_threshold
     cropped_pcd = result_pcd.select_by_index(np.where(ceiling_mask)[0])
+
+    # Visualize
     o3d.visualization.draw_geometries(
         [cropped_pcd, pred_lineset, gt_lineset],
     )
