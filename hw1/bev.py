@@ -83,7 +83,6 @@ class Projection(object):
         t_front_bev = t_bev_W - t_front_W
 
         # ----- camera intrinsic matrix -----
-        # focal_length * tan(fov / 2) = image_size / 2
         fx = - self.width / 2 / np.tan(np.deg2rad(fov / 2))
         fy = - self.height / 2 / np.tan(np.deg2rad(fov / 2))
         cx = self.width / 2
@@ -103,7 +102,7 @@ class Projection(object):
         # ----- homography matrix -----
         # NOTE: watch out the direction of normal vector.
         n_bev_C = np.array([[0], [0], [1]])
-        d_bev_C = t_bev_W[1]  # (scalar)
+        d_bev_C = t_bev_W[1]  # scalar
         H = K @ (R_front_bev + t_front_bev * n_bev_C.T / d_bev_C) @ K_inv
 
         x_front_h = H @ x_bev_h
