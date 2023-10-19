@@ -25,6 +25,20 @@ def odgt(img_path):
 
 
 if __name__ == "__main__":
+    """
+    Assume the data directory is like:
+    DATA_DIR ____
+                |
+                ___ annotations ______ modes[0]
+                |                 |___ modes[...]
+                |
+                ___ images ______ modes[0]
+                            |___ modes[...]
+    # generated file
+    saves[0]
+    saves[...]
+    """
+
     modes = ['train', 'val']
     saves = ['my_training.odgt', 'my_validation.odgt']  # customized
     DATA_DIR = './data'
