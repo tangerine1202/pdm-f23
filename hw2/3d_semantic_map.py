@@ -46,7 +46,7 @@ def reconstruct(args):
             trans_init = reg_global.transformation
             # local registration
             reg_p2p = local_icp_algorithm(
-                now_down, prev_down, trans_init, threshold=voxel_size, max_iter=50, method=args.icp)
+                now_down, prev_down, voxel_size, trans_init, max_iter=50, method=args.icp)
 
             # transform from now to previous
             T_ij = reg_p2p.transformation

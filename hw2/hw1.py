@@ -93,7 +93,7 @@ def execute_global_registration(source_down, target_down, source_fpfh, target_fp
     return result
 
 
-def local_icp_algorithm(source_down, target_down, trans_init, threshold, method='my', max_iter=30, relative_fitness=1e-6, relative_rmse=1e-6):
+def local_icp_algorithm(source_down, target_down, threshold, trans_init, method='my', max_iter=30, relative_fitness=1e-6, relative_rmse=1e-6):
     # ref: http://www.open3d.org/docs/release/tutorial/pipelines/icp_registration.html
     # Use Open3D ICP function to implement
     if method == 'my':
@@ -115,7 +115,7 @@ def local_icp_algorithm(source_down, target_down, trans_init, threshold, method=
     return result
 
 
-def my_local_icp_algorithm(source_down, target_down, trans_init, threshold, max_iter=30, relative_fitness=1e-6, relative_rmse=1e-6):
+def my_local_icp_algorithm(source_down, target_down, threshold, trans_init, max_iter=30, relative_fitness=1e-6, relative_rmse=1e-6):
     # ref slides: https://cs.gmu.edu/~kosecka/cs685/cs685-icp.pdf
     pts_src = np.array(source_down.points)  # n x 3
     pts_tgt = np.array(target_down.points)  # m x 3
