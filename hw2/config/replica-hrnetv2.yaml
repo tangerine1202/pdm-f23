@@ -5,18 +5,18 @@ DATASET:
   num_class: 49
   imgSizes: (300, 375, 450, 525, 600)
   imgMaxSize: 1000
-  padding_constant: 8
-  segm_downsampling_rate: 8
+  padding_constant: 32
+  segm_downsampling_rate: 4
   random_flip: True
 
 MODEL:
-  arch_encoder: "mobilenetv2dilated"
-  arch_decoder: "c1_deepsup"
-  fc_dim: 320
+  arch_encoder: "hrnetv2"
+  arch_decoder: "c1"
+  fc_dim: 720
 
 TRAIN:
   batch_size_per_gpu: 1
-  num_epoch: 20
+  num_epoch: 30
   start_epoch: 0
   epoch_iters: 5000
   optim: "SGD"
@@ -27,16 +27,16 @@ TRAIN:
   weight_decay: 1e-4
   deep_sup_scale: 0.4
   fix_bn: False
-  workers: 12
+  workers: 16
   disp_iter: 20
   seed: 304
 
 VAL:
-  visualize: True
-  checkpoint: "epoch_20.pth"
+  visualize: False
+  checkpoint: "epoch_7.pth"
 
 TEST:
-  checkpoint: "epoch_20.pth"
+  checkpoint: "epoch_7.pth"
   result: "./"
 
-DIR: "../ckpt/aprt1-mobilenetv2dilated-c1_deepsup"
+DIR: "../ckpt/aprt1-hrnetv2"
