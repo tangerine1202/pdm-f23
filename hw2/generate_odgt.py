@@ -1,7 +1,9 @@
 # ref: https://hackmd.io/wNGlmMq2RC-lY3l8JhO4SA?view
+import argparse
 import os
 import cv2
 import json
+from tqdm.auto import tqdm
 
 
 def odgt(img_path):
@@ -30,18 +32,22 @@ if __name__ == "__main__":
     DATA_DIR ____
                 |
                 ___ annotations ______ modes[0]
-                |                 |___ modes[...]
+                |                 |___ modes[1]
                 |
                 ___ images ______ modes[0]
-                            |___ modes[...]
+                            |___ modes[1]
     # generated file
     saves[0]
-    saves[...]
+    saves[1]
     """
+    argparse = argparse.ArgumentParser()
+    argparse.add_argument('--data_dir', type=str, default='./data')
+    args = argparse.parse_args()
 
     modes = ['train', 'val']
     saves = ['my_training.odgt', 'my_validation.odgt']  # customized
-    DATA_DIR = './data'
+
+    DATA_DIR = args.data_dir
 
     for i, mode in enumerate(modes):
         save = saves[i]
@@ -51,7 +57,7 @@ if __name__ == "__main__":
         img_list = [os.path.join(dir_path, img) for img in img_list]
 
         with open(f'{DATA_DIR}/{save}', mode='wt', encoding='utf-8') as myodgt:
-            for i, img in enumerate(img_list):
+            for i, img in tqdm(enumerate(img_list)):
                 a_odgt = odgt(img)
                 if a_odgt is not None:
                     myodgt.write(f'{json.dumps(a_odgt)}\n')
