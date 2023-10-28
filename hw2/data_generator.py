@@ -3,6 +3,7 @@ import json
 import os
 import numpy as np
 from PIL import Image
+from tqdm.auto import tqdm
 
 import habitat_sim
 import habitat_sim.agent
@@ -92,14 +93,16 @@ class Generator:
     """Generator for replica dataset, rgb, depth, and semantics.
     """
 
-    def __init__(self, path):
+    def __init__(self, path, only_aprt0=False):
         self._dataset_path = os.path.normpath(path)
         # fill the scene name you want to collect data from, and set the rooms
-        self._scenes = ["apartment_1", "apartment_2",
-                        "frl_apartment_0", "frl_apartment_1",
-                        "hotel_0", "office_0", "office_1",
-                        "room_0", "room_1", "room_2"]
-        # self._scenes = ["apartment_0"]
+        if only_aprt0:
+            self._scenes = ["apartment_0"]
+        else:
+            self._scenes = ["apartment_1", "apartment_2",
+                            "frl_apartment_0", "frl_apartment_1",
+                            "hotel_0", "office_0", "office_1",
+                            "room_0", "room_1", "room_2"]
 
         self._height = 512
         self._width = 512
@@ -245,7 +248,7 @@ class Generator:
             scene_semantic_dict = self.load_scene_semantic_dict(scene)
 
             # generate data for each room
-            for room in self._scene_to_rooms[scene]:
+            for room in tqdm(self._scene_to_rooms[scene]):
                 for _ in range(0, frames_per_room):
                     agent = simulator.get_agent(0)
                     agent_state = agent.get_state()
@@ -280,15 +283,17 @@ def main():
     # python data_generator.py --dataset [dataset folder] --output [output folder]
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, help="Folder containing Replica dataset")
+    parser.add_argument("--dataset", type=str, default='./replica_v1', help="Folder containing Replica dataset")
     parser.add_argument("--output", type=str, help="Output folder")
+    parser.add_argument("--only_aprt0", action='store_true', help="Only generate data for apartment_0")
+    parser.add_argument("--train_frames_per_room", type=int, default=100, help="Number of frames per room for training")
     args = parser.parse_args()
 
     # adjust [frames_per_room] to collect arbitrary number of  images
-    generator = Generator(path=args.dataset)
+    generator = Generator(path=args.dataset, only_aprt0=args.only_aprt0)
     generator.generate(out_folder=args.output,
                        split_name='train',
-                       frames_per_room=100)
+                       frames_per_room=args.train_frames_per_room)
     generator.generate(out_folder=args.output,
                        split_name='val',
                        frames_per_room=20)
