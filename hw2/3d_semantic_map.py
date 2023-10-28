@@ -1,3 +1,4 @@
+import os
 import argparse
 import glob
 import copy
@@ -196,6 +197,9 @@ if __name__ == '__main__':
     parser.add_argument('--color_src', type=str, default='seg', help='rgb or seg')
     args = parser.parse_args()
 
+    if args.color_src == 'seg' and args.voxel_down == 'open3d':
+        raise ValueError('seg color_src only supports "my" voxel_down implementation')
+
     if args.data_root == None:
         if args.floor == 1:
             args.data_root = 'data_collection/first_floor/'
@@ -204,11 +208,16 @@ if __name__ == '__main__':
 
     result_pcd = reconstruct(args)
 
+    # Save
+    filename = f'f{args.floor}_vs-{args.voxel_size}_vd-{args.voxel_down}_icp-{args.icp}_clr-{args.color_src}.pcd'
+    o3d.io.write_point_cloud(filename, result_pcd)
+    result_pcd = o3d.io.read_point_cloud(os.path.join('pcd', filename))
+
     ceiling_y_threshold = 0.0 * GT_T_SCALE
     ceiling_mask = np.array(result_pcd.points)[:, 1] < ceiling_y_threshold
     cropped_pcd = result_pcd.select_by_index(np.where(ceiling_mask)[0])
 
-    # Visualize
+    # # Visualize
     o3d.visualization.draw_geometries(
         [cropped_pcd],
     )
