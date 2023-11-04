@@ -1,5 +1,6 @@
 import os
 import argparse
+import multiprocessing
 import glob
 import copy
 from collections import Counter
@@ -17,6 +18,10 @@ from hw1 import (
 )
 
 GT_T_SCALE = 0.1
+
+# t_dict = {
+#     'voxel_down': [],
+# }
 
 
 def reconstruct(args):
@@ -74,92 +79,96 @@ def reconstruct(args):
     return result_pcd
 
 
-def custom_voxel_down(pcd, voxel_size):
-    # TODO: implement your own voxel down
-    """
-    Voxel downsampling uses a regular voxel grid to create a uniformly downsampled point cloud from an input point cloud.
+def process_chunk(chunk, voxel_size, result_queue):
+    dc = {}
+    for i in range(len(chunk)):
+        x_idx = int(chunk[i][0] // voxel_size)
+        y_idx = int(chunk[i][1] // voxel_size)
+        z_idx = int(chunk[i][2] // voxel_size)
+        voxel_idx = (x_idx, y_idx, z_idx)
+        color_key = tuple(chunk[i][3:])
+        if voxel_idx not in dc:
+            dc[voxel_idx] = Counter()
+        dc[voxel_idx][color_key] += 1
+    result_queue.put_nowait(dc)
 
-    The algorithm operates in two steps:
-    1. Points are bucketed into voxels.
-    2. Each occupied voxel generates exactly one point by averaging all points inside.
-    ref: http://www.open3d.org/docs/release/tutorial/geometry/pointcloud.html#Voxel-downsampling
-    """
-    # t0 = time.time()
-    points = np.array(pcd.points)
-    colors = np.array(pcd.colors)
 
-    # FIXME: 0.03 - 40-60% / 0.01 - 5%
-    # unique_t0 = time.time()
-    unique_colors, color_ids = np.unique(colors, axis=0, return_inverse=True)
-    # unique_t = time.time() - unique_t0
+def custom_voxel_down_multiproc(pcd, voxel_size):
+    points = np.asarray(pcd.points)
+    colors = np.asarray(pcd.colors)
 
-    # ignorble runtime
-    xbins = np.arange(np.min(points[:, 0]), np.max(points[:, 0]), voxel_size)
-    ybins = np.arange(np.min(points[:, 1]), np.max(points[:, 1]), voxel_size)
-    zbins = np.arange(np.min(points[:, 2]), np.max(points[:, 2]), voxel_size)
-    pts_xbin_idx = np.digitize(points[:, 0], xbins)
-    pts_ybin_idx = np.digitize(points[:, 1], ybins)
-    pts_zbin_idx = np.digitize(points[:, 2], zbins)
+    num_processes = multiprocessing.cpu_count()
+    chunk_size = len(points) // num_processes
 
-    # FIXME: 0.03 - 30-50% / 0.01 - 90%
-    # loop_t0 = time.time()
-    # bool_op_t = 0
-    # where_t = 0
-    # color_t = 0
-    voxel_points = []
-    voxel_colors = []
-    for i in range(len(xbins)):
-        xbin_mask = (pts_xbin_idx == i)
-        if not np.any(xbin_mask):
+    result_queue = multiprocessing.Queue()
+    processes = []
+    for i in range(num_processes):
+        start_idx = i * chunk_size
+        end_idx = start_idx + chunk_size if i < num_processes - 1 else len(points)
+        process_data = np.hstack((points[start_idx:end_idx], colors[start_idx:end_idx]))
+        process = multiprocessing.Process(target=process_chunk, args=(process_data, voxel_size, result_queue))
+        processes.append(process)
+        process.start()
+
+    dc = {}
+    cnt = 0
+    while cnt < num_processes:
+        if result_queue.empty():
             continue
-        for j in range(len(ybins)):
-            ybin_mask = (pts_ybin_idx == j)
-            # bool_op_t0 = time.time()
-            xybin_mask = (xbin_mask & ybin_mask)
-            # bool_op_t += time.time() - bool_op_t0
-            if not np.any(xybin_mask):
-                continue
-            for k in range(len(zbins)):
-                zbin_mask = (pts_zbin_idx == k)
+        chunk_dc = result_queue.get()
+        for voxel_idx, color_counter in chunk_dc.items():
+            if voxel_idx not in dc:
+                dc[voxel_idx] = Counter()
+            dc[voxel_idx] += color_counter
+        cnt += 1
 
-                # FIXME: 0.03 - 10% / 0.01 - 15%
-                # bool_op_t0 = time.time()
-                bin_mask = xybin_mask & zbin_mask
-                # bool_op_t += time.time() - bool_op_t0
-                if not np.any(bin_mask):
-                    continue
+    for process in processes:
+        process.join()
 
-                # FIXME: 0.03 - 4~% / 0.01 - 2-3%
-                # where_t0 = time.time()
-                voxel_idx = np.nonzero(bin_mask)[0]
-                # where_t += time.time() - where_t0
-
-                # FIXME: 0.03 - 5~% / 0.01 - 1-2%
-                # take the most common color in the voxel
-                # color_t0 = time.time()
-                most_common_color_id = Counter(color_ids[voxel_idx]).most_common(1)[0][0]
-                voxel_color = unique_colors[most_common_color_id]
-                # color_t += time.time() - color_t0
-
-                # put the voxel point at the center of the voxel
-                voxel_point = np.array([xbins[i] + voxel_size / 2,
-                                        ybins[j] + voxel_size / 2,
-                                        zbins[k] + voxel_size / 2])
-
-                voxel_points.append(voxel_point)
-                voxel_colors.append(voxel_color)
-    # loop_t = time.time() - loop_t0
-    # total_t = time.time() - t0
-    # print(f'unique_t:   {unique_t:.4f} {unique_t / total_t:.4f}%')
-    # print(f'bool_op_t:  {bool_op_t:.4f} {bool_op_t / total_t:.4f}%')
-    # print(f'where_t:    {where_t:.4f} {where_t / total_t:.4f}%')
-    # print(f'color_t:    {color_t:.4f} {color_t / total_t:.4f}%')
-    # print(f'loop_t:     {loop_t:.4f} {loop_t / total_t:.4f}%')
-    # print(f'total_t:    {total_t:.4f} {total_t / total_t:.4f}%')
+    voxel_points = np.empty((len(dc), 3))
+    voxel_colors = np.empty((len(dc), 3))
+    i = 0
+    for voxel_idx, color_counter in dc.items():
+        voxel_points[i][0] = voxel_idx[0] * voxel_size + voxel_size / 2
+        voxel_points[i][1] = voxel_idx[1] * voxel_size + voxel_size / 2
+        voxel_points[i][2] = voxel_idx[2] * voxel_size + voxel_size / 2
+        most_common_color = color_counter.most_common(1)[0][0]
+        voxel_colors[i] = most_common_color
+        i += 1
 
     pcd_down = o3d.geometry.PointCloud()
-    pcd_down.points = o3d.utility.Vector3dVector(np.array(voxel_points))
-    pcd_down.colors = o3d.utility.Vector3dVector(np.array(voxel_colors))
+    pcd_down.points = o3d.utility.Vector3dVector(voxel_points)
+    pcd_down.colors = o3d.utility.Vector3dVector(voxel_colors)
+    return pcd_down
+
+
+def custom_voxel_down(pcd, voxel_size):
+    points = np.asarray(pcd.points)
+    colors = np.asarray(pcd.colors)
+
+    dc = {}
+    for i in range(len(points)):
+        x_idx = (points[i][0] // voxel_size)
+        y_idx = (points[i][1] // voxel_size)
+        z_idx = (points[i][2] // voxel_size)
+        voxel_idx = (x_idx, y_idx, z_idx)
+        color_key = tuple(colors[i])
+        if voxel_idx not in dc:
+            dc[voxel_idx] = Counter()
+        dc[voxel_idx][color_key] += 1
+
+    voxel_points = np.empty((len(dc), 3))
+    voxel_colors = np.empty((len(dc), 3))
+    for i, (voxel_idx, color_counter) in enumerate(dc.items()):
+        voxel_points[i][0] = voxel_idx[0] * voxel_size + voxel_size / 2
+        voxel_points[i][1] = voxel_idx[1] * voxel_size + voxel_size / 2
+        voxel_points[i][2] = voxel_idx[2] * voxel_size + voxel_size / 2
+        most_common_color = color_counter.most_common(1)[0][0]
+        voxel_colors[i] = most_common_color
+
+    pcd_down = o3d.geometry.PointCloud()
+    pcd_down.points = o3d.utility.Vector3dVector(voxel_points)
+    pcd_down.colors = o3d.utility.Vector3dVector(voxel_colors)
     return pcd_down
 
 
@@ -208,8 +217,11 @@ if __name__ == '__main__':
 
     result_pcd = reconstruct(args)
 
+    # for k, v in t_dict.items():
+    #     print(f'{k:>10}: {np.mean(v):.4f}')
+
     # Save
-    filename = f'f{args.floor}_vs-{args.voxel_size}_vd-{args.voxel_down}_icp-{args.icp}_clr-{args.color_src}.pcd'
+    filename = f'./pcd/f{args.floor}_vs-{args.voxel_size}_vd-{args.voxel_down}_icp-{args.icp}_clr-{args.color_src}.pcd'
     o3d.io.write_point_cloud(filename, result_pcd)
     result_pcd = o3d.io.read_point_cloud(os.path.join('pcd', filename))
 
