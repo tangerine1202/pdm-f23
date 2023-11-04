@@ -19,10 +19,6 @@ from hw1 import (
 
 GT_T_SCALE = 0.1
 
-# t_dict = {
-#     'voxel_down': [],
-# }
-
 
 def reconstruct(args):
     data_root = args.data_root
@@ -79,14 +75,14 @@ def reconstruct(args):
     return result_pcd
 
 
-def process_chunk(chunk, voxel_size, result_queue):
+def process_chunk(points_chunk, colors_chunk, voxel_size, result_queue):
     dc = {}
-    for i in range(len(chunk)):
-        x_idx = int(chunk[i][0] // voxel_size)
-        y_idx = int(chunk[i][1] // voxel_size)
-        z_idx = int(chunk[i][2] // voxel_size)
+    for i in range(len(points_chunk)):
+        x_idx = int(points_chunk[i][0] // voxel_size)
+        y_idx = int(points_chunk[i][1] // voxel_size)
+        z_idx = int(points_chunk[i][2] // voxel_size)
         voxel_idx = (x_idx, y_idx, z_idx)
-        color_key = tuple(chunk[i][3:])
+        color_key = tuple(colors_chunk[i])
         if voxel_idx not in dc:
             dc[voxel_idx] = Counter()
         dc[voxel_idx][color_key] += 1
@@ -105,8 +101,11 @@ def custom_voxel_down_multiproc(pcd, voxel_size):
     for i in range(num_processes):
         start_idx = i * chunk_size
         end_idx = start_idx + chunk_size if i < num_processes - 1 else len(points)
-        process_data = np.hstack((points[start_idx:end_idx], colors[start_idx:end_idx]))
-        process = multiprocessing.Process(target=process_chunk, args=(process_data, voxel_size, result_queue))
+        points_chunk = points[start_idx:end_idx]
+        colors_chunk = colors[start_idx:end_idx]
+        process = multiprocessing.Process(
+            target=process_chunk,
+            args=(points_chunk, colors_chunk, voxel_size, result_queue))
         processes.append(process)
         process.start()
 
@@ -127,14 +126,11 @@ def custom_voxel_down_multiproc(pcd, voxel_size):
 
     voxel_points = np.empty((len(dc), 3))
     voxel_colors = np.empty((len(dc), 3))
-    i = 0
-    for voxel_idx, color_counter in dc.items():
+    for i, (voxel_idx, color_counter) in enumerate(dc.items()):
+        voxel_colors[i] = color_counter.most_common(1)[0][0]
         voxel_points[i][0] = voxel_idx[0] * voxel_size + voxel_size / 2
         voxel_points[i][1] = voxel_idx[1] * voxel_size + voxel_size / 2
         voxel_points[i][2] = voxel_idx[2] * voxel_size + voxel_size / 2
-        most_common_color = color_counter.most_common(1)[0][0]
-        voxel_colors[i] = most_common_color
-        i += 1
 
     pcd_down = o3d.geometry.PointCloud()
     pcd_down.points = o3d.utility.Vector3dVector(voxel_points)
@@ -146,12 +142,11 @@ def custom_voxel_down(pcd, voxel_size):
     points = np.asarray(pcd.points)
     colors = np.asarray(pcd.colors)
 
+    voxel_indices = np.floor(points / voxel_size).astype(int)
+
     dc = {}
     for i in range(len(points)):
-        x_idx = (points[i][0] // voxel_size)
-        y_idx = (points[i][1] // voxel_size)
-        z_idx = (points[i][2] // voxel_size)
-        voxel_idx = (x_idx, y_idx, z_idx)
+        voxel_idx = tuple(voxel_indices[i])
         color_key = tuple(colors[i])
         if voxel_idx not in dc:
             dc[voxel_idx] = Counter()
@@ -160,11 +155,10 @@ def custom_voxel_down(pcd, voxel_size):
     voxel_points = np.empty((len(dc), 3))
     voxel_colors = np.empty((len(dc), 3))
     for i, (voxel_idx, color_counter) in enumerate(dc.items()):
+        voxel_colors[i] = color_counter.most_common(1)[0][0]
         voxel_points[i][0] = voxel_idx[0] * voxel_size + voxel_size / 2
         voxel_points[i][1] = voxel_idx[1] * voxel_size + voxel_size / 2
         voxel_points[i][2] = voxel_idx[2] * voxel_size + voxel_size / 2
-        most_common_color = color_counter.most_common(1)[0][0]
-        voxel_colors[i] = most_common_color
 
     pcd_down = o3d.geometry.PointCloud()
     pcd_down.points = o3d.utility.Vector3dVector(voxel_points)
@@ -175,7 +169,10 @@ def custom_voxel_down(pcd, voxel_size):
 def preprocess_point_cloud(pcd, voxel_size, method='my'):
     # Do voxelization to reduce the number of points for less memory usage and speedup
     if method == 'my':
-        pcd_down = custom_voxel_down(pcd, voxel_size)
+        # multi process
+        pcd_down = custom_voxel_down_multiproc(pcd, voxel_size)
+        # single process
+        # pcd_down = custom_voxel_down(pcd, voxel_size)
     elif method == 'open3d':
         # ref: http://www.open3d.org/docs/release/tutorial/geometry/pointcloud.html#Voxel-downsampling
         pcd_down = pcd.voxel_down_sample(voxel_size=voxel_size)
@@ -204,6 +201,7 @@ if __name__ == '__main__':
     parser.add_argument('--voxel_down', type=str, default='my', help='open3d or my')
     parser.add_argument('--icp', type=str, default='my', help='open3d or my')
     parser.add_argument('--color_src', type=str, default='seg', help='rgb or seg')
+    parser.add_argument('--save', action='store_true', default=False, help='save pcd')
     args = parser.parse_args()
 
     if args.color_src == 'seg' and args.voxel_down == 'open3d':
@@ -217,13 +215,11 @@ if __name__ == '__main__':
 
     result_pcd = reconstruct(args)
 
-    # for k, v in t_dict.items():
-    #     print(f'{k:>10}: {np.mean(v):.4f}')
-
     # Save
-    filename = f'./pcd/f{args.floor}_vs-{args.voxel_size}_vd-{args.voxel_down}_icp-{args.icp}_clr-{args.color_src}.pcd'
-    o3d.io.write_point_cloud(filename, result_pcd)
-    result_pcd = o3d.io.read_point_cloud(os.path.join('pcd', filename))
+    if args.save:
+        fname = f'f{args.floor}_vs-{args.voxel_size}_vd-{args.voxel_down}_icp-{args.icp}_clr-{args.color_src}.pcd'
+        fpath = os.path.join('pcd', fname)
+        o3d.io.write_point_cloud(fname, result_pcd)
 
     ceiling_y_threshold = 0.0 * GT_T_SCALE
     ceiling_mask = np.array(result_pcd.points)[:, 1] < ceiling_y_threshold
