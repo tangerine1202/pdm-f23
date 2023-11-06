@@ -98,9 +98,7 @@ def inference(model, rgb_img, cfg):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(
-        description="PyTorch Semantic Segmentation Validation"
-    )
+    parser = argparse.ArgumentParser()
     parser.add_argument(
         "--cfg",
         metavar="FILE",
@@ -124,7 +122,7 @@ if __name__ == '__main__':
         default=1
     )
     parser.add_argument(
-        '--data_root',
+        '--data_dir',
         type=str,
         default=None
     )
@@ -140,21 +138,21 @@ if __name__ == '__main__':
     assert os.path.exists(cfg.MODEL.weights_encoder) and \
         os.path.exists(cfg.MODEL.weights_decoder), "checkpoint does not exitst!"
 
-    if args.data_root == None:
+    if args.data_dir == None:
         if args.floor == 1:
-            args.data_root = './data_collection/first_floor/'
+            args.data_dir = './data_collection/first_floor/'
         elif args.floor == 2:
-            args.data_root = './data_collection/second_floor/'
+            args.data_dir = './data_collection/second_floor/'
 
     # Prepare seg dir
     seg_dir_name = 'seg'
-    seg_dir = f'{args.data_root}{seg_dir_name}/'
+    seg_dir = f'{args.data_dir}{seg_dir_name}/'
     if not os.path.exists(seg_dir):
         os.makedirs(seg_dir, exist_ok=True)
 
     model = setup_model(cfg)
 
-    rgb_paths = glob.glob(f'{args.data_root}rgb/*.png')
+    rgb_paths = glob.glob(f'{args.data_dir}rgb/*.png')
     rgb_paths = sorted(rgb_paths, key=lambda x: int(x.split('/')[-1].split('.')[0]))
     for rgb_path in tqdm(rgb_paths):
         seg_path = rgb_path.replace('rgb', seg_dir_name)
