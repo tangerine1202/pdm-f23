@@ -405,7 +405,7 @@ if __name__ == '__main__':
     if args.save:
         fname = f'f{args.floor}_vs-{args.voxel_size}_vd-{args.voxel_down}_icp-{args.icp}_clr-{args.color_src}.pcd'
         fpath = os.path.join('pcd', fname)
-        o3d.io.write_point_cloud(fname, result_pcd)
+        o3d.io.write_point_cloud(fpath, result_pcd)
 
     ceiling_y_threshold = 0.0 * GT_T_SCALE
     ceiling_mask = np.array(result_pcd.points)[:, 1] < ceiling_y_threshold
