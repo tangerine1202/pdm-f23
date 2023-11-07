@@ -136,7 +136,7 @@ if __name__ == '__main__':
     cfg.MODEL.weights_decoder = os.path.join(
         cfg.DIR, 'decoder_' + cfg.VAL.checkpoint)
     assert os.path.exists(cfg.MODEL.weights_encoder) and \
-        os.path.exists(cfg.MODEL.weights_decoder), "checkpoint does not exitst!"
+        os.path.exists(cfg.MODEL.weights_decoder), "checkpoint does not exist!"
 
     if args.data_dir == None:
         if args.floor == 1:
