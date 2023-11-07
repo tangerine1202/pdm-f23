@@ -121,6 +121,7 @@ def navigateAndSee(action="", data_root='data_collection/second_floor/'):
     cv2.imwrite(data_root + f"rgb/{count}.png", transform_rgb_bgr(observations["color_sensor"]))
     cv2.imwrite(data_root + f"depth/{count}.png", transform_depth(observations["depth_sensor"]))
     cv2.imwrite(data_root + f"semantic/{count}.png", transform_semantic(observations["semantic_sensor"]))
+    np.save(data_root + f"instance/{count}.npy", observations["semantic_sensor"])
 
     cam_extr.append([sensor_state.position[0], sensor_state.position[1], sensor_state.position[2],
                     sensor_state.rotation.w, sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z])
@@ -171,7 +172,7 @@ elif args.floor == 2:
 if os.path.isdir(data_root):
     shutil.rmtree(data_root)  # WARNING: this line will delete whole directory with files
 
-for sub_dir in ['rgb/', 'depth/', 'semantic/']:
+for sub_dir in ['rgb/', 'depth/', 'semantic/', 'instance/']:
     os.makedirs(data_root + sub_dir)
 
 count = 0
