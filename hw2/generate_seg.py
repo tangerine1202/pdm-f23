@@ -4,6 +4,7 @@ import argparse
 
 from PIL import Image
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from torchvision import transforms
@@ -21,6 +22,7 @@ from mit_semseg.lib.utils import as_numpy
 
 
 colors = loadmat('./color101.mat')['colors']
+aprt0_class_corrs = None
 
 
 def setup_model(cfg):
@@ -96,6 +98,13 @@ def inference(model, rgb_img, cfg):
         pred = as_numpy(pred.squeeze(0).cpu())
     return pred
 
+def map_color_49to101(labelmap_49):
+    labelmap_101 = np.zeros_like(labelmap_49, dtype=int)
+    for label_49, label_101 in enumerate(aprt0_class_corrs[0]):
+        # TODO: Why -1?
+        labelmap_101[labelmap_49 == label_49] = label_101 - 1
+    return labelmap_101
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -149,6 +158,11 @@ if __name__ == '__main__':
     seg_dir = f'{args.data_dir}{seg_dir_name}/'
     if not os.path.exists(seg_dir):
         os.makedirs(seg_dir, exist_ok=True)
+    
+    # Setup color mapping
+    df = pd.read_excel('./apartment0_classes.xlsx')
+    df['label'] = df['label'].astype('int')
+    aprt0_class_corrs = df.to_numpy().T # (2, 49)
 
     model = setup_model(cfg)
 
@@ -158,5 +172,6 @@ if __name__ == '__main__':
         seg_path = rgb_path.replace('rgb', seg_dir_name)
         rgb = Image.open(rgb_path).convert('RGB')
         pred = inference(model, rgb, cfg)
+        pred = map_color_49to101(pred)
         seg = colorEncode(pred, colors).astype(np.uint8)
         Image.fromarray(seg).save(seg_path)
