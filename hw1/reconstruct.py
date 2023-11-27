@@ -4,7 +4,7 @@ import glob
 from collections import Counter
 import time
 
-# from tqdm.auto import tqdm
+from tqdm.auto import tqdm
 import open3d as o3d
 import numpy as np
 # np.set_printoptions(suppress=True)
@@ -323,8 +323,8 @@ def reconstruct(args):
     poses = []
     merged_pcd = o3d.geometry.PointCloud()
     prev_down, prev_fpfh = None, None
-    # for i in tqdm(range(1, seq_len+1)):
-    for i in range(1, seq_len + 1):
+    for i in tqdm(range(1, seq_len + 1)):
+        # for i in range(1, seq_len + 1):
         rgb_img = o3d.io.read_image(f'{data_root}rgb/{i}.png')
         dep_img = o3d.io.read_image(f'{data_root}depth/{i}.png')
         now_pcd = depth_image_to_point_cloud(rgb_img, dep_img)
