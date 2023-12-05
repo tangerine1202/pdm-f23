@@ -244,11 +244,10 @@ if __name__ == '__main__':
                 x_to, y_to = paths[j]
                 if not has_collision_free_path((x_from, y_from), (x_to, y_to), occupancy_map, args.delta_q):
                     j -= 1
-                    improved_paths.append(paths[j])
-                    i = j
                     break
-            if j == len(paths) - 1:
-                improved_paths.append(paths[j])
+            i = j
+            improved_paths.append(paths[i])
+            if i == len(paths) - 1:
                 break
         logging.info(f'optimized path size {len(improved_paths)}')
         np.save('improved_path.npy', improved_paths)
