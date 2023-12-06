@@ -1,5 +1,5 @@
 import logging
-import os 
+import os
 import argparse
 import json
 import numpy as np
@@ -9,13 +9,16 @@ import matplotlib.pyplot as plt
 
 np.set_printoptions(precision=4, suppress=True)
 
+
 def read_png(path):
-    return (plt.imread(path)[:,:,:3] * 255).astype(np.uint8)
+    return (plt.imread(path)[:, :, :3] * 255).astype(np.uint8)
+
 
 def cv2_imshow(img, title='image'):
     if hasattr(img, 'shape') and len(img.shape) == 3:
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     cv2.imshow(title, img)
+
 
 def click_event(event, x, y, flags, params):
     global start_cfg
@@ -26,15 +29,17 @@ def click_event(event, x, y, flags, params):
         cv2.circle(tmp_img, (x, y), 3, (255, 0, 0), -1)
         cv2_imshow(tmp_img, title='start point')
 
+
 def plot_edges(img, edges, type, opts):
     for edge in edges:
         x_from, y_from = edge[0]
         x_to, y_to = edge[1]
         clr = opts['rgb'][type]
-        cv2.line (img, (y_from, x_from), (y_to, x_to), clr, opts['line_width'])
+        cv2.line(img, (y_from, x_from), (y_to, x_to), clr, opts['line_width'])
         cv2.circle(img, (y_from, x_from), opts['radius'], clr, -1)
         cv2.circle(img, (y_to, x_to), opts['radius'], clr, -1)
     return img
+
 
 def save_masks(img, goal_map, occupancy_map):
     plt.figure(figsize=(12, 4))
@@ -73,20 +78,20 @@ class Tree:
             curr_cfg = self._nodes[curr_id]
         path.reverse()
         return np.array(path)
-    
+
     def get_nodes(self):
         return np.array(self._nodes)
-    
+
     def get_edges(self):
         edges = []
         # NOTE: skip start node, since it has no parent
         for i in range(1, len(self._nodes)):
             edges.append([self._nodes[self._parent_ids[i]], self._nodes[i]])
         return np.array(edges)
-    
+
     def is_in_tree(self, cfg):
         return np.any(cfg == self._nodes)
-    
+
 
 def sample_cfg(cfgs, goal_cfg, p_goal):
     if np.random.rand() < p_goal:
@@ -95,11 +100,13 @@ def sample_cfg(cfgs, goal_cfg, p_goal):
         q_rand = cfgs[np.random.randint(0, len(cfgs))]
     return q_rand
 
+
 def find_nearest_cfgs(node_cfgs, q_rand):
     dist = np.linalg.norm(node_cfgs - q_rand, axis=1)
     near_id = np.argmin(dist)
     q_near = node_cfgs[near_id]
     return q_near, near_id
+
 
 def extend_q(q_near, q_rand, delta_q):
     dist = np.linalg.norm(q_rand - q_near)
@@ -127,6 +134,7 @@ def has_collision_free_path(q_near, q_new, ocp_map, n_steps):
             return False
     return True
 
+
 def is_valid(q_near, q_new, ocp_map, tree, n_steps=100):
     if np.any(q_new < 0) or np.any(q_new >= ocp_map.shape):
         raise ValueError('q_new out of bound')
@@ -141,11 +149,6 @@ def is_valid(q_near, q_new, ocp_map, tree, n_steps=100):
         return False
     return True
 
-def is_goal(cfg, tgt_cfgs):
-    for tgt_cfg in tgt_cfgs:
-        if np.array_equal(cfg, tgt_cfg):
-            return True, cfg
-    return False, None
 
 def is_valid_start_cfg(cfg, ocp_map):
     if cfg is None:
@@ -155,14 +158,23 @@ def is_valid_start_cfg(cfg, ocp_map):
         return False
     return True
 
-def calc_smooth_paths(paths, occupancy_map, n_steps=100):
+
+def is_goal(cfg, tgt_cfgs):
+    for tgt_cfg in tgt_cfgs:
+        if np.array_equal(cfg, tgt_cfg):
+            return True, cfg
+    return False, None
+
+
+def calc_smooth_paths(paths, occupancy_map):
     new_paths = [paths[0]]
     i = 0
     while i < len(paths) - 1:
+        from_cfg = paths[i]
         for j in range(i + 1, len(paths)):
-            x_from, y_from = paths[i]
-            x_to, y_to = paths[j]
-            if not has_collision_free_path((x_from, y_from), (x_to, y_to), occupancy_map, n_steps):
+            to_cfg = paths[j]
+            dist = np.ceil(np.linalg.norm(paths[i] - paths[j])).astype(int)
+            if not has_collision_free_path(from_cfg, to_cfg, occupancy_map, dist):
                 j -= 1
                 break
         i = j
@@ -174,18 +186,21 @@ def calc_smooth_paths(paths, occupancy_map, n_steps=100):
 
 if __name__ == '__main__':
     logging.basicConfig(
-        level=logging.INFO, 
-        format='%(asctime)s [%(levelname)s] %(message)s', 
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s',
         datefmt='%H:%M:%S')
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--goal-name', type=str, 
-                        help='target object name, options: [rack, cushion, lamp, stair, cooktop]', 
-                        choices=['rack', 'cushion', 'lamp', 'stair', 'cooktop'],
-                        default='lamp')
-    parser.add_argument('--map-path', type=str, help='path to map image', default='map.png')
-    parser.add_argument('--map-cfg-path', type=str, help='path to map cfg', default='map.json')
-    parser.add_argument('--label-info-path', type=str, help='path to label info', default='label_info.json')
+    parser.add_argument('--goal-name', type=str,
+                        help='target object name, options: [rack, cushion, lamp, stair, cooktop]',
+                        # choices=['rack', 'cushion', 'lamp', 'stair', 'cooktop'],
+                        )
+    parser.add_argument('--map-path', type=str,
+                        help='path to map image', default='map.png')
+    parser.add_argument('--map-cfg-path', type=str,
+                        help='path to map cfg', default='map.json')
+    parser.add_argument('--label-info-path', type=str,
+                        help='path to label info', default='label_info.json')
     parser.add_argument('--seed', type=int, help='random seed', default=0)
     parser.add_argument('--max-step', type=int, help='max step', default=20000)
     parser.add_argument('--p-goal', type=float, help='p_goal', default=0.5)
@@ -199,10 +214,12 @@ if __name__ == '__main__':
             logging.warning('goal-thresh should >= 10 for cooktop')
             # raise ValueError('goal_thresh should >= 10 for cooktop')
 
+    # setup
     np.random.seed(args.seed)
     label_info = json.load(open(args.label_info_path, 'r'))
     goal_rgb = np.array(label_info[args.goal_name]['rgb'])
 
+    # build map
     img = read_png(args.map_path)
     goal_map = np.all(img == goal_rgb, axis=-1).astype(np.uint8)
     occupancy_map = np.any(img != 255, axis=-1).astype(np.uint8)
@@ -214,6 +231,11 @@ if __name__ == '__main__':
     if goal_map.sum() == 0:
         raise ValueError('goal region is empty')
 
+    # build configurations
+    goal_cfgs = np.argwhere(goal_map)
+    # NOTE: tgt_cfgs should be valid
+    cfgs = np.argwhere(occupancy_map == 0 | goal_map)
+    save_masks(img, goal_map, occupancy_map == 0 | goal_map)
 
     # choose starting point
     start_cfg = None
@@ -223,14 +245,6 @@ if __name__ == '__main__':
         cv2.waitKey(0)
     cv2.destroyAllWindows()
     logging.info(f'start_cfg {start_cfg}')
-
-
-    # build configuration space
-    goal_cfgs = np.argwhere(goal_map)
-    # NOTE: tgt_cfgs should be valid
-    cfgs = np.argwhere(occupancy_map == 0 | goal_map)
-    save_masks(img, goal_map, occupancy_map==0 | goal_map)
-
 
     # RRT
     tree = Tree(start_cfg)
@@ -247,14 +261,15 @@ if __name__ == '__main__':
 
     logging.info(f'using {total_step} steps')
     logging.info(f'tree size {len(tree.get_nodes())}')
+
     if found_path:
         paths = tree.get_path(found_goal_cfg)
         logging.info(f'found path size {len(paths)}')
-
-        # optimize path
-        smooth_paths = calc_smooth_paths(paths, occupancy_map, args.delta_q)
+        # smooth path
+        smooth_paths = calc_smooth_paths(paths, occupancy_map)
         logging.info(f'smooth path size {len(smooth_paths)}')
 
+        # save path info for navigation
         path_dict = {
             'rrt_paths': paths.tolist(),
             'smooth_paths': smooth_paths.tolist(),
@@ -271,11 +286,11 @@ if __name__ == '__main__':
         }
         json.dump(path_dict, open('path_info.json', 'w'), indent=4)
 
-    # viz
+    # visualization
     plot_opts = {
-        'rgb': { 
-            'tree': (0, 0, 0), 
-            'path':  (255, 0, 0), 
+        'rgb': {
+            'tree': (0, 0, 0),
+            'path':  (255, 0, 0),
             'smooth_path': (255, 155, 0),
             'start': (0, 0, 0),
             'goal': (0, 0, 0),
@@ -289,13 +304,6 @@ if __name__ == '__main__':
     rrt_img = plot_edges(rrt_img, tree.get_edges().tolist(), 'tree', plot_opts)
 
     if found_path:
-        # log path
-        # for i in range(len(paths) - 1):
-        #     x_from, y_from = paths[i]
-        #     x_to, y_to = paths[i+1]
-        #     logging.info(f'({x_from}, {y_from}) -> ({x_to}, {y_to})')
-
-        # plot path
         path_edges = [[paths[i], paths[i+1]] for i in range(len(paths) - 1)]
         smooth_path_edges = [[smooth_paths[i], smooth_paths[i+1]] for i in range(len(smooth_paths) - 1)]
         rrt_img = plot_edges(rrt_img, path_edges, 'path', plot_opts)
@@ -306,4 +314,4 @@ if __name__ == '__main__':
     plt.axis('equal')
     plt.tight_layout(pad=0)
     plt.imshow(rrt_img)
-    plt.savefig('rrt.png', bbox_inches='tight', pad_inches=0)
+    plt.savefig('path.png', bbox_inches='tight', pad_inches=0)

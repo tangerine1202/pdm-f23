@@ -27,6 +27,7 @@ sim_settings = {
 }
 
 cam_extr = []
+video = None
 
 # This function generates a config for the simulator.
 # It contains two parts:
@@ -60,13 +61,13 @@ def make_simple_cfg(settings, forward_step_size=0.25, turn_angle=10.0):
     # Here you can specify the amount of displacement in a forward action and the turn angle
     agent_cfg.action_space = {
         "move_forward": habitat_sim.agent.ActionSpec(
-            "move_forward", habitat_sim.agent.ActuationSpec(amount = forward_step_size),
+            "move_forward", habitat_sim.agent.ActuationSpec(amount=forward_step_size),
         ),
         "turn_left": habitat_sim.agent.ActionSpec(
-            "turn_left", habitat_sim.agent.ActuationSpec(amount = turn_angle),
+            "turn_left", habitat_sim.agent.ActuationSpec(amount=turn_angle),
         ),
         "turn_right": habitat_sim.agent.ActionSpec(
-            "turn_right", habitat_sim.agent.ActuationSpec(amount = turn_angle),
+            "turn_right", habitat_sim.agent.ActuationSpec(amount=turn_angle),
         )
     }
 
@@ -103,7 +104,7 @@ def make_simple_cfg(settings, forward_step_size=0.25, turn_angle=10.0):
 
 
 def navigateAndSee(action, goal_label_id, id2label=None, record=False, record_root=''):
-    global count
+    global count, video
     if action is None:
         raise Exception("action is None")
     observations = sim.step(action)
@@ -118,11 +119,21 @@ def navigateAndSee(action, goal_label_id, id2label=None, record=False, record_ro
     goal_mask = np.zeros((rgb_img.shape[0], rgb_img.shape[1], 1))
     goal_mask[sem_img == goal_label_id] = 1
     clr_img = np.zeros_like(rgb_img)
-    clr_img[:,:] = mask_color
-    clr_img[:,:,1:] = rgb_img[:,:,1:]
+    clr_img[:, :] = mask_color
+    clr_img[:, :, 1:] = rgb_img[:, :, 1:]
 
-    masked_img = (goal_mask == 0) * rgb_img + goal_mask * (blend_alpha * clr_img + (1-blend_alpha) * rgb_img)
+    masked_img = (goal_mask == 0) * rgb_img + goal_mask * \
+        (blend_alpha * clr_img + (1-blend_alpha) * rgb_img)
     masked_img = masked_img.astype(np.uint8)
+
+    count += 1
+    if record:
+        video.write(transform_rgb_bgr(masked_img))
+        cv2.imwrite(os.path.join(record_root, 'masked', f'{count}.png'), transform_rgb_bgr(masked_img))
+        # cv2.imwrite(os.path.join(record_root, 'rgb', f'{count}.png'), transform_rgb_bgr(rgb_img))
+    # cv2.imwrite(data_root + f"depth/{count}.png", transform_depth(observations["depth_sensor"]))
+    # cv2.imwrite(data_root + f"semantic/{count}.png", transform_semantic(observations["instance_sensor"]))
+    # np.save(data_root + f"instance/{count}.npy", observations["instance_sensor"])
 
     # cv2.imshow("RGB", transform_rgb_bgr(rgb_img))
     cv2.imshow("masked", transform_rgb_bgr(masked_img))
@@ -133,17 +144,10 @@ def navigateAndSee(action, goal_label_id, id2label=None, record=False, record_ro
     # print(sensor_state.position[0], sensor_state.position[1], sensor_state.position[2],
     #       sensor_state.rotation.w, sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z)
 
-    count += 1
-    if record:
-        # cv2.imwrite(os.path.join(record_root, 'rgb', f'{count}.png'), transform_rgb_bgr(rgb_img))
-        cv2.imwrite(os.path.join(record_root, 'masked', f'{count}.png'), transform_rgb_bgr(masked_img))
-    # cv2.imwrite(data_root + f"depth/{count}.png", transform_depth(observations["depth_sensor"]))
-    # cv2.imwrite(data_root + f"semantic/{count}.png", transform_semantic(observations["instance_sensor"]))
-    # np.save(data_root + f"instance/{count}.npy", observations["instance_sensor"])
-
     # cam_extr.append([sensor_state.position[0], sensor_state.position[1], sensor_state.position[2],
     #                 sensor_state.rotation.w, sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z])
     return sensor_state.position[0], sensor_state.position[1], sensor_state.position[2], sensor_state.rotation.w, sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z
+
 
 def get_agent_pose():
     agent_state = agent.get_state()
@@ -152,6 +156,7 @@ def get_agent_pose():
     q = scipy_R.from_quat(np.array([sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z, sensor_state.rotation.w]))
     r = q.as_euler('yxz', degrees=True)[0]
     return t, r
+
 
 def calc_tgt_t(curr_t, prev_subgoal_t, subgoal_t, step_size=0.2):
     # curr_v = curr_t[[0, 2]] - prev_subgoal_t[[0, 2]]
@@ -177,6 +182,7 @@ def calc_tgt_t(curr_t, prev_subgoal_t, subgoal_t, step_size=0.2):
     tgt_t = subgoal_t
     return tgt_t
 
+
 def get_relative_pose(src_t, src_r, tgt_t):
     rel_t = tgt_t - src_t
     rel_dist = np.linalg.norm(rel_t[[0, 2]])
@@ -194,6 +200,7 @@ def get_relative_pose(src_t, src_r, tgt_t):
             rel_r = tgt_r - src_r
     return rel_dist, rel_r
 
+
 def get_next_action(rel_dist, rel_r, t_thresh=0.25, r_thresh=10):
     if np.abs(rel_r) > r_thresh:
         if rel_r > 0:
@@ -205,12 +212,17 @@ def get_next_action(rel_dist, rel_r, t_thresh=0.25, r_thresh=10):
     else:
         return "finish"
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--path-type', type=str, choices=['rrt', 'smooth'], help='path type, options: rrt, smooth', default='rrt') 
-    parser.add_argument('--path-info', type=str, help='path to path_info.json', default='path_info.json')
-    parser.add_argument('--record', type=int, choices=[0, 1], help='record or not, default False', default=0)
+    parser.add_argument('--path-type', type=str, choices=['rrt', 'smooth'], 
+                        help='path type, options: rrt, smooth', default='rrt')
+    parser.add_argument('--path-info', type=str,
+                        help='path to path_info.json', default='path_info.json')
+    parser.add_argument('--record', type=int, choices=[0, 1], 
+                        help='record or not, default False', default=0)
     parser.add_argument('--record-path', type=str, help='path to record', default='./record')
+    parser.add_argument('--fps', type=int, help='frame per second', default=5)
     parser.add_argument('--step-size', type=float, help='forward step size', default=0.2)
     parser.add_argument('--turn-angle', type=float, help='turn angle', default=10.0)
     parser.add_argument('--t-thresh', type=float, help='translation threshold', default=0.3)
@@ -237,7 +249,8 @@ if __name__ == "__main__":
     paths = (paths_in_px - center_px) * px2pcd_scale
     paths = np.concatenate((paths, np.zeros((paths.shape[0], 1))), axis=1)[:, [0, 2, 1]]
 
-    cfg = make_simple_cfg(sim_settings, forward_step_size=args.step_size, turn_angle=args.turn_angle)
+    cfg = make_simple_cfg(
+        sim_settings, forward_step_size=args.step_size, turn_angle=args.turn_angle)
     sim = habitat_sim.Simulator(cfg)
     # initialize an agent
     agent = sim.initialize_agent(sim_settings["default_agent"])
@@ -248,16 +261,21 @@ if __name__ == "__main__":
     agent.set_state(agent_state)
     # obtain the default, discrete actions that an agent can perform
     # default action space contains 3 actions: move_forward, turn_left, and turn_right
-    action_names = list(cfg.agents[sim_settings["default_agent"]].action_space.keys())
+    action_names = list(
+        cfg.agents[sim_settings["default_agent"]].action_space.keys())
     print("Discrete action space: ", action_names)
-
 
     # Setup recording
     if args.record and os.path.isdir(args.record_path):
-        shutil.rmtree(args.record_path)  # WARNING: this line will delete whole directory with files
+        # WARNING: this line will delete whole directory with files
         for sub_dir in ['masked']:
+            shutil.rmtree(os.path.join(args.record_path, sub_dir))
             os.makedirs(os.path.join(args.record_path, sub_dir))
 
+        # choose codec according to format needed
+        video_path = os.path.join(args.record_path, f'{path_info["goal_name"]}.mp4')
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        video = cv2.VideoWriter(video_path, fourcc, args.fps, (512, 512))
 
     FORWARD_KEY = "w"
     LEFT_KEY = "a"
@@ -275,7 +293,8 @@ if __name__ == "__main__":
 
     count = 0
     action = "move_forward"
-    navigateAndSee(action, goal_label_id, id2label, args.record, args.record_path)
+    navigateAndSee(action, goal_label_id, id2label,
+                   args.record, args.record_path)
 
     subgoal_idx = 1
     prev_subgoal_t = paths[subgoal_idx - 1]
@@ -292,43 +311,55 @@ if __name__ == "__main__":
         # --- Manual Control ---
         elif keystroke == ord(FORWARD_KEY):
             action = "move_forward"
-            navigateAndSee(action, goal_label_id, id2label, args.record, args.record_path)
+            navigateAndSee(action, goal_label_id, id2label,
+                           args.record, args.record_path)
             print("action: FORWARD")
         elif keystroke == ord(LEFT_KEY):
             action = "turn_left"
-            navigateAndSee(action, goal_label_id, id2label, args.record, args.record_path)
+            navigateAndSee(action, goal_label_id, id2label,
+                           args.record, args.record_path)
             print("action: LEFT")
         elif keystroke == ord(RIGHT_KEY):
             action = "turn_right"
-            navigateAndSee(action, goal_label_id, id2label, args.record, args.record_path)
+            navigateAndSee(action, goal_label_id, id2label,
+                           args.record, args.record_path)
             print("action: RIGHT")
         # --- Navigation by RRT ---
         elif keystroke == ord('j'):
             curr_t, curr_r = get_agent_pose()
-            tgt_t = calc_tgt_t(curr_t, prev_subgoal_t, subgoal_t, args.step_size)
+            tgt_t = calc_tgt_t(curr_t, prev_subgoal_t,
+                               subgoal_t, args.step_size)
             relative_dist, relative_r = get_relative_pose(curr_t, curr_r, tgt_t)
-            action = get_next_action(relative_dist, relative_r, t_thresh=args.t_thresh, r_thresh=args.r_thresh)
+            action = get_next_action(relative_dist, relative_r, 
+                                     t_thresh=args.t_thresh, r_thresh=args.r_thresh)
             while action == 'finish' and subgoal_idx < len(paths) - 1:
                 subgoal_idx += 1
                 prev_subgoal_t = paths[subgoal_idx - 1]
                 subgoal_t = paths[subgoal_idx]
                 curr_t, curr_r = get_agent_pose()
-                tgt_t = calc_tgt_t(curr_t, prev_subgoal_t, subgoal_t, args.step_size)
+                tgt_t = calc_tgt_t(curr_t, prev_subgoal_t,
+                                   subgoal_t, args.step_size)
                 relative_dist, relative_r = get_relative_pose(curr_t, curr_r, tgt_t)
-                action = get_next_action(relative_dist, relative_r, t_thresh=args.t_thresh, r_thresh=args.r_thresh)
+                action = get_next_action(relative_dist, relative_r, 
+                                         t_thresh=args.t_thresh, r_thresh=args.r_thresh)
             if action == 'finish':
                 print("FINISH")
                 break
             print("action: ", action)
-            navigateAndSee(action, goal_label_id, id2label, args.record, args.record_path)
+            navigateAndSee(action, goal_label_id, id2label,
+                           args.record, args.record_path)
         else:
             print("INVALID KEY")
             continue
-        
+
         curr_t, curr_r = get_agent_pose()
         # tgt_t = calc_tgt_t(curr_t, prev_subgoal_t, subgoal_t, args.step_size)
         relative_dist, relative_r = get_relative_pose(curr_t, curr_r, subgoal_t)
         print('relative pose: ', relative_dist, relative_r)
         print(f'----- {subgoal_idx} / {len(paths) - 1} -----')
+
+    if args.record:
+        video.release()
+        cv2.destroyAllWindows()
 
     # np.save(data_root + 'GT_pose.npy', np.asarray(cam_extr))

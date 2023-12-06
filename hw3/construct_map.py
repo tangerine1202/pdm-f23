@@ -10,16 +10,26 @@ GT_T_SCALE = 0.1
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--pcd_path', type=str, help='path of pcd file')
-    parser.add_argument('--npy_path', type=str, help='path of npy file', default='semantic_3d_pointcloud/point.npy')
-    parser.add_argument('--clr_path', type=str, help='path of color file', default='semantic_3d_pointcloud/color01.npy')
-    parser.add_argument('--map_name', type=str, help='name of map image', default='map')
-    parser.add_argument('--map_w_size', type=float, default=10.0, help='width size of map image')
-    parser.add_argument('--save_dir', type=str, default='map', help='path to store cropped pcd')
-    parser.add_argument('--ceiling_y', type=float, default=-0.1, help='y threshold of ceiling')
-    parser.add_argument('--floor_y', type=float, default=-1.2, help='y threshold of floor')
-    parser.add_argument('--down_size', type=float, default=0.0, help='down sampling voxel size of pcd')
-    parser.add_argument('--store_pcd', action='store_true', help='store cropped pcd')
-    parser.add_argument('--viz', action='store_true', help='visualize cropped pcd')
+    parser.add_argument('--npy_path', type=str, help='path of npy file',
+                        default='semantic_3d_pointcloud/point.npy')
+    parser.add_argument('--clr_path', type=str, help='path of color file',
+                        default='semantic_3d_pointcloud/color01.npy')
+    parser.add_argument('--map_name', type=str,
+                        help='name of map image', default='map')
+    parser.add_argument('--map_w_size', type=float,
+                        default=10.0, help='width size of map image')
+    parser.add_argument('--save_dir', type=str, default='map',
+                        help='path to store cropped pcd')
+    parser.add_argument('--ceiling_y', type=float, default=-0.1, 
+                        help='y threshold of ceiling')
+    parser.add_argument('--floor_y', type=float, default=-1.2, 
+                        help='y threshold of floor')
+    parser.add_argument('--down_size', type=float, default=0.0,
+                        help='down sampling voxel size of pcd')
+    parser.add_argument('--store_pcd', action='store_true',
+                        help='store cropped pcd')
+    parser.add_argument('--viz', action='store_true',
+                        help='visualize cropped pcd')
     args = parser.parse_args()
 
     # read full pcd
@@ -34,7 +44,7 @@ if __name__ == '__main__':
             pcd.colors = o3d.utility.Vector3dVector(np.load(args.clr_path))
         ext = os.path.splitext(args.npy_path)[-1]
         filename = os.path.basename(args.npy_path)
-    
+
     print('bound', pcd.get_axis_aligned_bounding_box())
 
     # down sample
@@ -58,7 +68,7 @@ if __name__ == '__main__':
 
     # map
     points = np.array(cropped_pcd.points)
-    colors = np.array(cropped_pcd.colors) 
+    colors = np.array(cropped_pcd.colors)
     # ensure higher points cover lower points
     order_args = np.argsort(points[:, 1])
     points = points[order_args]
@@ -104,7 +114,6 @@ if __name__ == '__main__':
         'y_center_px': y_center_px,
     }
     json.dump(map_cfg, open(f'{args.map_name}.json', 'w'))
-
 
     # Visualize
     if args.viz:
