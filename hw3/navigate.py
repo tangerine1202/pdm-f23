@@ -43,12 +43,10 @@ def transform_depth(image):
     return depth_img
 
 
-def transform_semantic(semantic_obs):
-    semantic_img = Image.new("P", (semantic_obs.shape[1], semantic_obs.shape[0]))
-    semantic_img.putpalette(d3_40_colors_rgb.flatten())
-    semantic_img.putdata((semantic_obs.flatten() % 40).astype(np.uint8))
-    semantic_img = semantic_img.convert("RGB")
-    semantic_img = cv2.cvtColor(np.asarray(semantic_img), cv2.COLOR_RGB2BGR)
+def transform_semantic(instance_obs, id2label):
+    semantic = id2label[instance_obs]
+    semantic_img = Image.new("L", (semantic.shape[1], semantic.shape[0]))
+    semantic_img.putdata(semantic.flatten())
     return semantic_img
 
 
@@ -86,45 +84,47 @@ def make_simple_cfg(settings, forward_step_size=0.25, turn_angle=10.0):
     ]
     rgb_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
 
-    # depth sensor
-    depth_sensor_spec = habitat_sim.CameraSensorSpec()
-    depth_sensor_spec.uuid = "depth_sensor"
-    depth_sensor_spec.sensor_type = habitat_sim.SensorType.DEPTH
-    depth_sensor_spec.resolution = [settings["height"], settings["width"]]
-    depth_sensor_spec.position = [0.0, settings["sensor_height"], 0.0]
-    depth_sensor_spec.orientation = [
+    # instance sensor
+    instance_sensor_spec = habitat_sim.CameraSensorSpec()
+    instance_sensor_spec.uuid = "instance_sensor"
+    instance_sensor_spec.sensor_type = habitat_sim.SensorType.SEMANTIC
+    instance_sensor_spec.resolution = [settings["height"], settings["width"]]
+    instance_sensor_spec.position = [0.0, settings["sensor_height"], 0.0]
+    instance_sensor_spec.orientation = [
         settings["sensor_pitch"],
         0.0,
         0.0,
     ]
-    depth_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
+    instance_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
 
-    # semantic sensor
-    semantic_sensor_spec = habitat_sim.CameraSensorSpec()
-    semantic_sensor_spec.uuid = "semantic_sensor"
-    semantic_sensor_spec.sensor_type = habitat_sim.SensorType.SEMANTIC
-    semantic_sensor_spec.resolution = [settings["height"], settings["width"]]
-    semantic_sensor_spec.position = [0.0, settings["sensor_height"], 0.0]
-    semantic_sensor_spec.orientation = [
-        settings["sensor_pitch"],
-        0.0,
-        0.0,
-    ]
-    semantic_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
-
-    agent_cfg.sensor_specifications = [rgb_sensor_spec, depth_sensor_spec, semantic_sensor_spec]
+    agent_cfg.sensor_specifications = [rgb_sensor_spec, instance_sensor_spec]
 
     return habitat_sim.Configuration(sim_cfg, [agent_cfg])
 
 
-def navigateAndSee(action=""): #, data_root='data_collection/second_floor/'):
+def navigateAndSee(action, goal_label_id, id2label=None, record=False, record_root=''):
     global count
+    if action is None:
+        raise Exception("action is None")
     observations = sim.step(action)
     # print("action: ", action)
 
-    cv2.imshow("RGB", transform_rgb_bgr(observations["color_sensor"]))
-    # cv2.imshow("depth", transform_depth(observations["depth_sensor"]))
-    # cv2.imshow("semantic", transform_semantic(observations["semantic_sensor"]))
+    rgb_img = observations["color_sensor"]
+    inst_img = observations["instance_sensor"]
+    sem_img = np.asarray(transform_semantic(inst_img, id2label))
+
+    blend_alpha = 0.5
+    mask_color = (255, 0, 0, 0)
+    goal_mask = np.zeros((rgb_img.shape[0], rgb_img.shape[1], 1))
+    goal_mask[sem_img == goal_label_id] = 1
+    clr_img = np.zeros_like(rgb_img)
+    clr_img[:,:] = mask_color
+
+    masked_img = (goal_mask == 0) * rgb_img + goal_mask * (blend_alpha * clr_img + (1-blend_alpha) * rgb_img)
+    masked_img = masked_img.astype(np.uint8)
+
+    cv2.imshow("RGB", transform_rgb_bgr(rgb_img))
+    cv2.imshow("masked", transform_rgb_bgr(masked_img))
     agent_state = agent.get_state()
     sensor_state = agent_state.sensor_states['color_sensor']
     # print("Frame:", count)
@@ -133,10 +133,12 @@ def navigateAndSee(action=""): #, data_root='data_collection/second_floor/'):
     #       sensor_state.rotation.w, sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z)
 
     count += 1
-    # cv2.imwrite(data_root + f"rgb/{count}.png", transform_rgb_bgr(observations["color_sensor"]))
+    if record:
+        cv2.imwrite(os.path.join(record_root, 'rgb', f'{count}.png'), transform_rgb_bgr(rgb_img))
+        cv2.imwrite(os.path.join(record_root, 'masked', f'{count}.png'), transform_rgb_bgr(masked_img))
     # cv2.imwrite(data_root + f"depth/{count}.png", transform_depth(observations["depth_sensor"]))
-    # cv2.imwrite(data_root + f"semantic/{count}.png", transform_semantic(observations["semantic_sensor"]))
-    # np.save(data_root + f"instance/{count}.npy", observations["semantic_sensor"])
+    # cv2.imwrite(data_root + f"semantic/{count}.png", transform_semantic(observations["instance_sensor"]))
+    # np.save(data_root + f"instance/{count}.npy", observations["instance_sensor"])
 
     # cam_extr.append([sensor_state.position[0], sensor_state.position[1], sensor_state.position[2],
     #                 sensor_state.rotation.w, sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z])
@@ -180,21 +182,33 @@ def get_next_action(rel_dist, rel_r, t_thresh=0.25, r_thresh=10):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--map-path', type=str, help='path to map image', default='map.png')
-    parser.add_argument('--map-cfg-path', type=str, help='path to map cfg', default='map.json')
-    parser.add_argument('--nav-path', type=str, help='path to path.npy', default='path.npy')
-    parser.add_argument('--name2rgb_path', type=str, help='path to name2rgb json', default='name2rgb.json')
+    parser.add_argument('--path-type', type=str, choices=['rrt', 'smooth'], help='path type, options: rrt, smooth', default='rrt') 
+    parser.add_argument('--path-info', type=str, help='path to path_info.json', default='path_info.json')
+    parser.add_argument('--record', type=bool, help='record or not', default=False)
+    parser.add_argument('--record-path', type=str, help='path to record', default='./record')
     parser.add_argument('--step-size', type=float, help='forward step size', default=0.2)
     parser.add_argument('--turn-angle', type=float, help='turn angle', default=10.0)
     parser.add_argument('--t-thresh', type=float, help='translation threshold', default=0.3)
     parser.add_argument('--r-thresh', type=float, help='rotation threshold', default=10.0)
     args = parser.parse_args()
 
+    # path information
+    path_info = json.load(open(args.path_info, 'r'))
+
+    # id2label
+    scene_dict_path = os.path.join(os.path.dirname(test_scene), 'info_semantic.json')
+    scene_dict = json.load(open(scene_dict_path, 'r'))
+    id2label = np.array(scene_dict["id_to_label"])
+
+    # label_info
+    label_info = json.load(open(path_info['label_info_path'], 'r'))
+    goal_label_id = label_info[path_info['goal_name']]['id']
+
     # Convert path to the Habitat coordinate system
-    map_cfg = json.load(open(args.map_cfg_path, 'r'))
+    map_cfg = json.load(open(path_info['map_cfg_path'], 'r'))
     px2pcd_scale = np.array([map_cfg['h_px2pcd_scale'], map_cfg['w_px2pcd_scale']])
     center_px = np.array([map_cfg['y_center_px'], map_cfg['x_center_px']])
-    paths_in_px = np.load(args.nav_path)
+    paths_in_px = np.asarray(path_info[f'{args.path_type}_paths'])
     paths = (paths_in_px - center_px) * px2pcd_scale
     paths = np.concatenate((paths, np.zeros((paths.shape[0], 1))), axis=1)[:, [0, 2, 1]]
 
@@ -213,20 +227,12 @@ if __name__ == "__main__":
     print("Discrete action space: ", action_names)
 
 
-    # if args.floor == 1:
-    #     data_root = "data_collection/first_floor/"
-    # elif args.floor == 2:
-    #     data_root = "data_collection/second_floor/"
+    if args.record and os.path.isdir(args.record_path):
+        shutil.rmtree(args.record_path)  # WARNING: this line will delete whole directory with files
+    for sub_dir in ['rgb', 'masked']:
+        os.makedirs(os.path.join(args.record_path, sub_dir))
 
-    # if os.path.isdir(data_root):
-    #     shutil.rmtree(data_root)  # WARNING: this line will delete whole directory with files
 
-    # for sub_dir in ['rgb/', 'depth/', 'semantic/', 'instance/']:
-    #     os.makedirs(data_root + sub_dir)
-
-    count = 0
-    action = "move_forward"
-    navigateAndSee(action)
 
     FORWARD_KEY = "w"
     LEFT_KEY = "a"
@@ -242,6 +248,10 @@ if __name__ == "__main__":
     print(" j for RRT navigation")
     print("#############################")
 
+    count = 0
+    action = "move_forward"
+    navigateAndSee(action, goal_label_id, id2label, args.record, args.record_path)
+
     subgoal_idx = 1
     subgoal_t = paths[subgoal_idx]
     curr_t, curr_r = get_agent_pose()
@@ -256,32 +266,32 @@ if __name__ == "__main__":
         # --- Manual Control ---
         elif keystroke == ord(FORWARD_KEY):
             action = "move_forward"
-            navigateAndSee(action)
+            navigateAndSee(action, goal_label_id, id2label, args.record, args.record_path)
             print("action: FORWARD")
         elif keystroke == ord(LEFT_KEY):
             action = "turn_left"
-            navigateAndSee(action)
+            navigateAndSee(action, goal_label_id, id2label, args.record, args.record_path)
             print("action: LEFT")
         elif keystroke == ord(RIGHT_KEY):
             action = "turn_right"
-            navigateAndSee(action)
+            navigateAndSee(action, goal_label_id, id2label, args.record, args.record_path)
             print("action: RIGHT")
         # --- Navigation by RRT ---
         elif keystroke == ord('j'):
             curr_t, curr_r = get_agent_pose()
             relative_dist, relative_r = get_relative_pose(curr_t, curr_r, subgoal_t)
             action = get_next_action(relative_dist, relative_r, t_thresh=args.t_thresh, r_thresh=args.r_thresh)
-            while action == 'finish':
+            while action == 'finish' and subgoal_idx < len(paths) - 1:
                 subgoal_idx += 1
-                if subgoal_idx >= len(paths):
-                    print("FINISH")
-                    break
                 subgoal_t = paths[subgoal_idx]
                 curr_t, curr_r = get_agent_pose()
                 relative_dist, relative_r = get_relative_pose(curr_t, curr_r, subgoal_t)
                 action = get_next_action(relative_dist, relative_r, t_thresh=args.t_thresh, r_thresh=args.r_thresh)
+            if action == 'finish':
+                print("FINISH")
+                break
             print("action: ", action)
-            navigateAndSee(action)
+            navigateAndSee(action, goal_label_id, id2label, args.record, args.record_path)
         else:
             print("INVALID KEY")
             continue
@@ -290,7 +300,5 @@ if __name__ == "__main__":
         relative_dist, relative_r = get_relative_pose(curr_t, curr_r, subgoal_t)
         print('relative pose: ', relative_dist, relative_r)
         print(f'----- {subgoal_idx} / {len(paths) - 1} -----')
-    
-
 
     # np.save(data_root + 'GT_pose.npy', np.asarray(cam_extr))

@@ -155,6 +155,22 @@ def is_valid_start_cfg(cfg, ocp_map):
         return False
     return True
 
+def calc_smooth_paths(paths, occupancy_map, n_steps=100):
+    new_paths = [paths[0]]
+    i = 0
+    while i < len(paths) - 1:
+        for j in range(i + 1, len(paths)):
+            x_from, y_from = paths[i]
+            x_to, y_to = paths[j]
+            if not has_collision_free_path((x_from, y_from), (x_to, y_to), occupancy_map, n_steps):
+                j -= 1
+                break
+        i = j
+        new_paths.append(paths[i])
+        if i == len(paths) - 1:
+            break
+    return np.array(new_paths)
+
 
 if __name__ == '__main__':
     logging.basicConfig(
@@ -169,7 +185,7 @@ if __name__ == '__main__':
                         default='lamp')
     parser.add_argument('--map-path', type=str, help='path to map image', default='map.png')
     parser.add_argument('--map-cfg-path', type=str, help='path to map cfg', default='map.json')
-    parser.add_argument('--name2rgb_path', type=str, help='path to name2rgb json', default='name2rgb.json')
+    parser.add_argument('--label-info-path', type=str, help='path to label info', default='label_info.json')
     parser.add_argument('--seed', type=int, help='random seed', default=0)
     parser.add_argument('--max-step', type=int, help='max step', default=10000)
     parser.add_argument('--p-goal', type=float, help='p_goal', default=0.5)
@@ -184,8 +200,8 @@ if __name__ == '__main__':
             # raise ValueError('goal_thresh should >= 10 for cooktop')
 
     np.random.seed(args.seed)
-    name2rgb = json.load(open(args.name2rgb_path, 'r'))
-    goal_rgb = np.array(name2rgb[args.goal_name])
+    label_info = json.load(open(args.label_info_path, 'r'))
+    goal_rgb = np.array(label_info[args.goal_name]['rgb'])
 
     img = read_png(args.map_path)
     goal_map = np.all(img == goal_rgb, axis=-1).astype(np.uint8)
@@ -234,31 +250,33 @@ if __name__ == '__main__':
     if found_path:
         paths = tree.get_path(found_goal_cfg)
         logging.info(f'found path size {len(paths)}')
-        np.save('path.npy', paths)
 
         # optimize path
-        improved_paths = [paths[0]]
-        i = 0
-        while i < len(paths) - 1:
-            for j in range(i + 1, len(paths)):
-                x_from, y_from = paths[i]
-                x_to, y_to = paths[j]
-                if not has_collision_free_path((x_from, y_from), (x_to, y_to), occupancy_map, args.delta_q):
-                    j -= 1
-                    break
-            i = j
-            improved_paths.append(paths[i])
-            if i == len(paths) - 1:
-                break
-        logging.info(f'optimized path size {len(improved_paths)}')
-        np.save('improved_path.npy', improved_paths)
+        smooth_paths = calc_smooth_paths(paths, occupancy_map, args.delta_q)
+        logging.info(f'smooth path size {len(smooth_paths)}')
+
+        path_dict = {
+            'rrt_paths': paths.tolist(),
+            'smooth_paths': smooth_paths.tolist(),
+            'goal_name': args.goal_name,
+            'map_path': args.map_path,
+            'map_cfg_path': args.map_cfg_path,
+            'label_info_path': args.label_info_path,
+            'seed': args.seed,
+            'max_step': args.max_step,
+            'p_goal': args.p_goal,
+            'delta_q': args.delta_q,
+            'goal_thresh': args.goal_thresh,
+            'collision_thresh': args.collision_thresh,
+        }
+        json.dump(path_dict, open('path_info.json', 'w'), indent=4)
 
     # viz
     plot_opts = {
         'rgb': { 
             'tree': (0, 0, 0), 
             'path':  (255, 0, 0), 
-            'imp_path': (255, 155, 0),
+            'smooth_path': (255, 155, 0),
             'start': (0, 0, 0),
             'goal': (0, 0, 0),
         },
@@ -279,10 +297,9 @@ if __name__ == '__main__':
 
         # plot path
         path_edges = [[paths[i], paths[i+1]] for i in range(len(paths) - 1)]
+        smooth_path_edges = [[smooth_paths[i], smooth_paths[i+1]] for i in range(len(smooth_paths) - 1)]
         rrt_img = plot_edges(rrt_img, path_edges, 'path', plot_opts)
-        if improved_paths:
-            improved_path_edges = [[improved_paths[i], improved_paths[i+1]] for i in range(len(improved_paths) - 1)]
-            rrt_img = plot_edges(rrt_img, improved_path_edges, 'imp_path', plot_opts)
+        rrt_img = plot_edges(rrt_img, smooth_path_edges, 'smooth_path', plot_opts)
         cv2.putText(rrt_img, 's', (paths[0][1], paths[0][0]), cv2.FONT_HERSHEY_SIMPLEX, 1, plot_opts['rgb']['start'], 2, cv2.LINE_AA)
         cv2.putText(rrt_img, 'e', (paths[-1][1], paths[-1][0]), cv2.FONT_HERSHEY_SIMPLEX, 1, plot_opts['rgb']['goal'], 2, cv2.LINE_AA)
 
