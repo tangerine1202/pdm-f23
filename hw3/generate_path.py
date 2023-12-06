@@ -53,30 +53,23 @@ def save_masks(img, goal_map, occupancy_map):
 class Tree:
     def __init__(self, start_cfg):
         self._nodes = [start_cfg]
-        self._edges = []
+        self._parent_ids = [0]
 
-    def add_node(self, cfg):
+    def add_node(self, cfg, parent_id):
         self._nodes.append(cfg)
-
-    def add_edge(self, cfg1, cfg2):
-        self._edges.append((cfg1, cfg2))
+        self._parent_ids.append(parent_id)
 
     def get_path(self, goal_cfg):
         if not self.is_in_tree(goal_cfg):
             raise ValueError('goal_cfg not in tree')
 
         path = []
-        curr_cfg = goal_cfg
-        while curr_cfg is not None:
-            if np.any([np.array_equal(curr_cfg, cfg) for cfg in path]):
-                raise ValueError('loop detected in path')
+        curr_id = np.argwhere([np.array_equal(cfg, goal_cfg) for cfg in self._nodes])[0][0]
+        curr_cfg = self._nodes[curr_id]
+        while curr_id != 0:
             path.append(curr_cfg)
-            for edge in self._edges:
-                if np.all(edge[1] == curr_cfg):
-                    curr_cfg = edge[0]
-                    break
-            else:
-                curr_cfg = None
+            curr_id = self._parent_ids[curr_id]
+            curr_cfg = self._nodes[curr_id]
         path.reverse()
         return np.array(path)
     
@@ -84,11 +77,15 @@ class Tree:
         return np.array(self._nodes)
     
     def get_edges(self):
-        return np.array(self._edges)
+        edges = []
+        # NOTE: skip start node, since it has no parent
+        for i in range(1, len(self._nodes)):
+            edges.append([self._nodes[self._parent_ids[i]], self._nodes[i]])
+        return np.array(edges)
     
     def is_in_tree(self, cfg):
         return np.any(cfg == self._nodes)
-
+    
 
 def sample_cfg(cfgs, goal_cfg, p_goal):
     if np.random.rand() < p_goal:
@@ -99,8 +96,9 @@ def sample_cfg(cfgs, goal_cfg, p_goal):
 
 def find_nearest_cfgs(node_cfgs, q_rand):
     dist = np.linalg.norm(node_cfgs - q_rand, axis=1)
-    q_near = node_cfgs[np.argmin(dist)]
-    return q_near
+    near_id = np.argmin(dist)
+    q_near = node_cfgs[near_id]
+    return q_near, near_id
 
 def extend_q(q_near, q_rand, delta_q):
     dist = np.linalg.norm(q_rand - q_near)
@@ -175,13 +173,14 @@ if __name__ == '__main__':
     parser.add_argument('--max-step', type=int, help='max step', default=10000)
     parser.add_argument('--p-goal', type=float, help='p_goal', default=0.5)
     parser.add_argument('--delta-q', type=float, help='delta_q', default=30)
-    parser.add_argument('--px-thresh', type=float, help='px_thresh', default=5)
+    parser.add_argument('--goal-thresh', type=float, help='threshold for goal region', default=7)
+    parser.add_argument('--collision-thresh', type=float, help='threshold for collision', default=3)
     args = parser.parse_args()
 
     if args.goal_name == 'cooktop':
-        if args.px_thresh < 10:
-            logging.warning('px_thresh should >= 10 for cooktop')
-            # raise ValueError('px_thresh should >= 10 for cooktop')
+        if args.goal_thresh < 10:
+            logging.warning('goal_thresh should >= 10 for cooktop')
+            # raise ValueError('goal_thresh should >= 10 for cooktop')
 
     np.random.seed(args.seed)
     name2rgb = json.load(open(args.name2rgb_path, 'r'))
@@ -190,9 +189,14 @@ if __name__ == '__main__':
     img = read_png(args.map_path)
     goal_map = np.all(img == goal_rgb, axis=-1).astype(np.uint8)
     occupancy_map = np.any(img != 255, axis=-1).astype(np.uint8)
+    # enlarge goal region and collision region
+    goal_map = cv2.dilate(goal_map, np.ones((args.goal_thresh, args.goal_thresh)))
+    occupancy_map = cv2.dilate(occupancy_map, np.ones((args.collision_thresh, args.collision_thresh)))
+
     logging.info(f'map size {img.shape[:2]}')
     if goal_map.sum() == 0:
         raise ValueError('goal region is empty')
+
 
     # choose starting point
     start_cfg = None
@@ -205,25 +209,21 @@ if __name__ == '__main__':
 
 
     # build configuration space
-    # TODO: better way to define the goal regions?
-    # relax goal regions
-    goal_map = cv2.dilate(goal_map, np.ones((args.px_thresh, args.px_thresh)))
     goal_cfgs = np.argwhere(goal_map)
     # NOTE: tgt_cfgs should be valid
-    cfgs = np.argwhere(occupancy_map == 0 & goal_map)
-    save_masks(img, goal_map, occupancy_map==0 & goal_map)
+    cfgs = np.argwhere(occupancy_map == 0 | goal_map)
+    save_masks(img, goal_map, occupancy_map==0 | goal_map)
+
 
     # RRT
     tree = Tree(start_cfg)
     found_path = False
     for total_step in tqdm(range(args.max_step)):
         q_rand = sample_cfg(cfgs, goal_cfgs, args.p_goal)
-        q_near = find_nearest_cfgs(tree.get_nodes(), q_rand)
+        q_near, q_near_id = find_nearest_cfgs(tree.get_nodes(), q_rand)
         q_new = extend_q(q_near, q_rand, args.delta_q)
         if is_valid(q_near, q_new, occupancy_map, tree, args.delta_q):
-            tree.add_node(q_new)
-            tree.add_edge(q_near, q_new)
-            # TODO: found path if it is close enough to tgt_cfg
+            tree.add_node(q_new, q_near_id)
             found_path, found_goal_cfg = is_goal(q_new, goal_cfgs)
             if found_path:
                 break
@@ -285,5 +285,7 @@ if __name__ == '__main__':
         cv2.putText(rrt_img, 's', (paths[0][1], paths[0][0]), cv2.FONT_HERSHEY_SIMPLEX, 1, plot_opts['rgb']['start'], 2, cv2.LINE_AA)
         cv2.putText(rrt_img, 'e', (paths[-1][1], paths[-1][0]), cv2.FONT_HERSHEY_SIMPLEX, 1, plot_opts['rgb']['goal'], 2, cv2.LINE_AA)
 
+    plt.axis('equal')
+    plt.tight_layout(pad=0)
     plt.imshow(rrt_img)
-    plt.savefig('rrt.png')
+    plt.savefig('rrt.png', bbox_inches='tight', pad_inches=0)

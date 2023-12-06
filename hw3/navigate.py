@@ -271,15 +271,17 @@ if __name__ == "__main__":
             curr_t, curr_r = get_agent_pose()
             relative_dist, relative_r = get_relative_pose(curr_t, curr_r, subgoal_t)
             action = get_next_action(relative_dist, relative_r, t_thresh=args.t_thresh, r_thresh=args.r_thresh)
-            if action == 'finish':
+            while action == 'finish':
                 subgoal_idx += 1
                 if subgoal_idx >= len(paths):
                     print("FINISH")
                     break
                 subgoal_t = paths[subgoal_idx]
-            else:
-                print("action: ", action)
-                navigateAndSee(action)
+                curr_t, curr_r = get_agent_pose()
+                relative_dist, relative_r = get_relative_pose(curr_t, curr_r, subgoal_t)
+                action = get_next_action(relative_dist, relative_r, t_thresh=args.t_thresh, r_thresh=args.r_thresh)
+            print("action: ", action)
+            navigateAndSee(action)
         else:
             print("INVALID KEY")
             continue
