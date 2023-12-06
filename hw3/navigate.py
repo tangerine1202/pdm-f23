@@ -119,11 +119,12 @@ def navigateAndSee(action, goal_label_id, id2label=None, record=False, record_ro
     goal_mask[sem_img == goal_label_id] = 1
     clr_img = np.zeros_like(rgb_img)
     clr_img[:,:] = mask_color
+    clr_img[:,:,1:] = rgb_img[:,:,1:]
 
     masked_img = (goal_mask == 0) * rgb_img + goal_mask * (blend_alpha * clr_img + (1-blend_alpha) * rgb_img)
     masked_img = masked_img.astype(np.uint8)
 
-    cv2.imshow("RGB", transform_rgb_bgr(rgb_img))
+    # cv2.imshow("RGB", transform_rgb_bgr(rgb_img))
     cv2.imshow("masked", transform_rgb_bgr(masked_img))
     agent_state = agent.get_state()
     sensor_state = agent_state.sensor_states['color_sensor']
@@ -134,7 +135,7 @@ def navigateAndSee(action, goal_label_id, id2label=None, record=False, record_ro
 
     count += 1
     if record:
-        cv2.imwrite(os.path.join(record_root, 'rgb', f'{count}.png'), transform_rgb_bgr(rgb_img))
+        # cv2.imwrite(os.path.join(record_root, 'rgb', f'{count}.png'), transform_rgb_bgr(rgb_img))
         cv2.imwrite(os.path.join(record_root, 'masked', f'{count}.png'), transform_rgb_bgr(masked_img))
     # cv2.imwrite(data_root + f"depth/{count}.png", transform_depth(observations["depth_sensor"]))
     # cv2.imwrite(data_root + f"semantic/{count}.png", transform_semantic(observations["instance_sensor"]))
@@ -151,6 +152,30 @@ def get_agent_pose():
     q = scipy_R.from_quat(np.array([sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z, sensor_state.rotation.w]))
     r = q.as_euler('yxz', degrees=True)[0]
     return t, r
+
+def calc_tgt_t(curr_t, prev_subgoal_t, subgoal_t, step_size=0.2):
+    # curr_v = curr_t[[0, 2]] - prev_subgoal_t[[0, 2]]
+    # subgoal_v = subgoal_t[[0, 2]] - prev_subgoal_t[[0, 2]]
+    # unit_curr_v = curr_v / np.linalg.norm(curr_v)
+    # unit_subgoal_v = subgoal_v / np.linalg.norm(subgoal_v)
+    # d = np.linalg.norm(np.dot(unit_curr_v, unit_subgoal_v) * curr_v)
+    # angle_curr_subgoal = np.arccos(np.dot(unit_curr_v, unit_subgoal_v))
+    # print(d, step_size, d / step_size)
+    # proj_t = np.sin(angle_curr_subgoal) * np.linalg.norm(curr_v) * (subgoal_t - prev_subgoal_t) / np.linalg.norm(subgoal_t - prev_subgoal_t) + prev_subgoal_t
+    # if d >= step_size:
+    #     tgt_t = proj_t
+    #     return tgt_t
+    # else:
+    #     angle = np.arcsin(d / step_size)
+    #     inc_t = (subgoal_t - prev_subgoal_t) / np.linalg.norm(subgoal_t - prev_subgoal_t) * (step_size * np.cos(angle))
+    #     tgt_t = proj_t + inc_t
+
+    # curr_dist = np.linalg.norm(curr_t[[0, 2]] - prev_subgoal_t[[0, 2]])
+    # subgoal_dist = np.linalg.norm(subgoal_t[[0, 2]] - prev_subgoal_t[[0, 2]])
+    # progress_ratio = np.clip((curr_dist) / subgoal_dist, 0, 1)
+    # tgt_t = prev_subgoal_t + (subgoal_t - prev_subgoal_t) * progress_ratio
+    tgt_t = subgoal_t
+    return tgt_t
 
 def get_relative_pose(src_t, src_r, tgt_t):
     rel_t = tgt_t - src_t
@@ -184,7 +209,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--path-type', type=str, choices=['rrt', 'smooth'], help='path type, options: rrt, smooth', default='rrt') 
     parser.add_argument('--path-info', type=str, help='path to path_info.json', default='path_info.json')
-    parser.add_argument('--record', type=bool, help='record or not', default=False)
+    parser.add_argument('--record', type=bool, help='record or not, default False', default=False)
     parser.add_argument('--record-path', type=str, help='path to record', default='./record')
     parser.add_argument('--step-size', type=float, help='forward step size', default=0.2)
     parser.add_argument('--turn-angle', type=float, help='turn angle', default=10.0)
@@ -227,11 +252,11 @@ if __name__ == "__main__":
     print("Discrete action space: ", action_names)
 
 
+    # Setup recording
     if args.record and os.path.isdir(args.record_path):
         shutil.rmtree(args.record_path)  # WARNING: this line will delete whole directory with files
-    for sub_dir in ['rgb', 'masked']:
+    for sub_dir in ['masked']:
         os.makedirs(os.path.join(args.record_path, sub_dir))
-
 
 
     FORWARD_KEY = "w"
@@ -253,6 +278,7 @@ if __name__ == "__main__":
     navigateAndSee(action, goal_label_id, id2label, args.record, args.record_path)
 
     subgoal_idx = 1
+    prev_subgoal_t = paths[subgoal_idx - 1]
     subgoal_t = paths[subgoal_idx]
     curr_t, curr_r = get_agent_pose()
     relative_dist, relative_r = get_relative_pose(curr_t, curr_r, subgoal_t)
@@ -279,13 +305,16 @@ if __name__ == "__main__":
         # --- Navigation by RRT ---
         elif keystroke == ord('j'):
             curr_t, curr_r = get_agent_pose()
-            relative_dist, relative_r = get_relative_pose(curr_t, curr_r, subgoal_t)
+            tgt_t = calc_tgt_t(curr_t, prev_subgoal_t, subgoal_t, args.step_size)
+            relative_dist, relative_r = get_relative_pose(curr_t, curr_r, tgt_t)
             action = get_next_action(relative_dist, relative_r, t_thresh=args.t_thresh, r_thresh=args.r_thresh)
             while action == 'finish' and subgoal_idx < len(paths) - 1:
                 subgoal_idx += 1
+                prev_subgoal_t = paths[subgoal_idx - 1]
                 subgoal_t = paths[subgoal_idx]
                 curr_t, curr_r = get_agent_pose()
-                relative_dist, relative_r = get_relative_pose(curr_t, curr_r, subgoal_t)
+                tgt_t = calc_tgt_t(curr_t, prev_subgoal_t, subgoal_t, args.step_size)
+                relative_dist, relative_r = get_relative_pose(curr_t, curr_r, tgt_t)
                 action = get_next_action(relative_dist, relative_r, t_thresh=args.t_thresh, r_thresh=args.r_thresh)
             if action == 'finish':
                 print("FINISH")
@@ -297,6 +326,7 @@ if __name__ == "__main__":
             continue
         
         curr_t, curr_r = get_agent_pose()
+        # tgt_t = calc_tgt_t(curr_t, prev_subgoal_t, subgoal_t, args.step_size)
         relative_dist, relative_r = get_relative_pose(curr_t, curr_r, subgoal_t)
         print('relative pose: ', relative_dist, relative_r)
         print(f'----- {subgoal_idx} / {len(paths) - 1} -----')
