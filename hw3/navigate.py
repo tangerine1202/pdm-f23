@@ -255,8 +255,8 @@ if __name__ == "__main__":
     # Setup recording
     if args.record and os.path.isdir(args.record_path):
         shutil.rmtree(args.record_path)  # WARNING: this line will delete whole directory with files
-    for sub_dir in ['masked']:
-        os.makedirs(os.path.join(args.record_path, sub_dir))
+        for sub_dir in ['masked']:
+            os.makedirs(os.path.join(args.record_path, sub_dir))
 
 
     FORWARD_KEY = "w"
