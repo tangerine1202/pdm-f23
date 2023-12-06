@@ -78,7 +78,7 @@ if __name__ == '__main__':
 
     # map config
     map_img = plt.imread(os.path.join(f'{args.map_name}.png'))[:, :, :3]
-    map_mask = np.all(map_img == 255, axis=-1)
+    map_mask = np.all(map_img == 1, axis=-1)
     ocp_pos = np.argwhere(map_mask == 0)
     # pixel coordinates
     top_px = np.max(ocp_pos[:, 0])
