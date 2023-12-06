@@ -187,16 +187,16 @@ if __name__ == '__main__':
     parser.add_argument('--map-cfg-path', type=str, help='path to map cfg', default='map.json')
     parser.add_argument('--label-info-path', type=str, help='path to label info', default='label_info.json')
     parser.add_argument('--seed', type=int, help='random seed', default=0)
-    parser.add_argument('--max-step', type=int, help='max step', default=10000)
+    parser.add_argument('--max-step', type=int, help='max step', default=20000)
     parser.add_argument('--p-goal', type=float, help='p_goal', default=0.5)
     parser.add_argument('--delta-q', type=float, help='delta_q', default=30)
-    parser.add_argument('--goal-thresh', type=float, help='threshold for goal region', default=7)
-    parser.add_argument('--collision-thresh', type=float, help='threshold for collision', default=3)
+    parser.add_argument('--goal-thresh', type=int, help='threshold for goal region', default=3)
+    parser.add_argument('--collision-thresh', type=int, help='threshold for collision', default=1)
     args = parser.parse_args()
 
     if args.goal_name == 'cooktop':
         if args.goal_thresh < 10:
-            logging.warning('goal_thresh should >= 10 for cooktop')
+            logging.warning('goal-thresh should >= 10 for cooktop')
             # raise ValueError('goal_thresh should >= 10 for cooktop')
 
     np.random.seed(args.seed)
@@ -207,8 +207,8 @@ if __name__ == '__main__':
     goal_map = np.all(img == goal_rgb, axis=-1).astype(np.uint8)
     occupancy_map = np.any(img != 255, axis=-1).astype(np.uint8)
     # enlarge goal region and collision region
-    goal_map = cv2.dilate(goal_map, np.ones((args.goal_thresh, args.goal_thresh)))
-    occupancy_map = cv2.dilate(occupancy_map, np.ones((args.collision_thresh, args.collision_thresh)))
+    goal_map = cv2.dilate(goal_map, np.ones((args.goal_thresh*2+1, args.goal_thresh*2+1)))
+    occupancy_map = cv2.dilate(occupancy_map, np.ones((args.collision_thresh*2+1, args.collision_thresh*2+1)))
 
     logging.info(f'map size {img.shape[:2]}')
     if goal_map.sum() == 0:
