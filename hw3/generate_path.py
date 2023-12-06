@@ -39,14 +39,15 @@ def plot_edges(img, edges, type, opts):
 def save_masks(img, goal_map, occupancy_map):
     plt.figure(figsize=(12, 4))
     plt.subplot(1, 3, 1)
-    plt.imshow(img)
     plt.title('semantic map')
+    plt.imshow(img)
     plt.subplot(1, 3, 2)
-    plt.imshow(goal_map, cmap='gray')
     plt.title('goal mask')
+    plt.imshow(goal_map, cmap='gray')
     plt.subplot(1, 3, 3)
-    plt.imshow(occupancy_map, cmap='gray')
     plt.title('occupied mask')
+    plt.imshow(occupancy_map, cmap='gray')
+    plt.tight_layout(pad=0)
     plt.savefig(f'masks.png')
 
 
