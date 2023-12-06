@@ -209,7 +209,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--path-type', type=str, choices=['rrt', 'smooth'], help='path type, options: rrt, smooth', default='rrt') 
     parser.add_argument('--path-info', type=str, help='path to path_info.json', default='path_info.json')
-    parser.add_argument('--record', type=bool, help='record or not, default False', default=False)
+    parser.add_argument('--record', type=int, choices=[0, 1], help='record or not, default False', default=0)
     parser.add_argument('--record-path', type=str, help='path to record', default='./record')
     parser.add_argument('--step-size', type=float, help='forward step size', default=0.2)
     parser.add_argument('--turn-angle', type=float, help='turn angle', default=10.0)
