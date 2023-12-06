@@ -3,7 +3,9 @@ import argparse
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--goal-name', type=str, help='name of goal')
+    parser.add_argument('--goal-name', type=str, 
+                        help='target object name, options: [rack, cushion, lamp, stair, cooktop]', 
+                        choices=['rack', 'cushion', 'lamp', 'stair', 'cooktop'],)
     parser.add_argument('--path-type', type=str, choices=['rrt', 'smooth'], help='type of path, options=[rrt, smooth]', default='smooth')
     parser.add_argument('--goal-thresh', type=int, help='threshold for goal region', default=3)
     parser.add_argument('--record', type=int, choices=[0, 1], help='record or not, default False', default=1)
