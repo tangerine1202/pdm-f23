@@ -15,7 +15,7 @@ if __name__ == '__main__':
     parser.add_argument('--map_name', type=str, help='name of map image', default='map')
     parser.add_argument('--map_w_size', type=float, default=10.0, help='width size of map image')
     parser.add_argument('--save_dir', type=str, default='map', help='path to store cropped pcd')
-    parser.add_argument('--ceiling_y', type=float, default=0.0, help='y threshold of ceiling')
+    parser.add_argument('--ceiling_y', type=float, default=-0.1, help='y threshold of ceiling')
     parser.add_argument('--floor_y', type=float, default=-1.2, help='y threshold of floor')
     parser.add_argument('--down_size', type=float, default=0.0, help='down sampling voxel size of pcd')
     parser.add_argument('--store_pcd', action='store_true', help='store cropped pcd')
