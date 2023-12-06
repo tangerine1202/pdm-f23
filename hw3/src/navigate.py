@@ -266,10 +266,13 @@ if __name__ == "__main__":
     print("Discrete action space: ", action_names)
 
     # Setup recording
-    if args.record and os.path.isdir(args.record_path):
+    if not os.path.isdir(args.record_path):
+        os.makedirs(args.record_path)
+    if args.record:
         # WARNING: this line will delete whole directory with files
         for sub_dir in ['masked']:
-            shutil.rmtree(os.path.join(args.record_path, sub_dir))
+            if os.path.isdir(os.path.join(args.record_path, sub_dir)):
+                shutil.rmtree(os.path.join(args.record_path, sub_dir))
             os.makedirs(os.path.join(args.record_path, sub_dir))
 
         # choose codec according to format needed
