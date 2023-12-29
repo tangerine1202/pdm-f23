@@ -8,7 +8,7 @@ Spec: [Google Docs](https://docs.google.com/document/d/10vEbFE372HeNocKmyQws_-5D
 1. Put dataset `replica_v1` under `src/`.
 2. Download the `semantic_3d_pointcloud/` from the link in the spec, and put it under `src/`.
 3. Install the dependencies `tqdm, scipy`. Other dependencies should be the same as HW2.
-4. Run `python main.py --goal_name <goal_name> [--record <0,1>]` to construct map, generate path, navigate in Habitat.
+4. Run `python main.py --goal-name <goal_name> [--record <0,1>]` to construct map, generate path, navigate in Habitat.
 
 ## Usage
 

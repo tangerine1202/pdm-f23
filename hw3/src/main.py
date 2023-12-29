@@ -9,7 +9,7 @@ if __name__ == '__main__':
     parser.add_argument('--path-type', type=str, choices=['rrt', 'smooth'], 
                         help='type of path, options=[rrt, smooth]', default='smooth')
     parser.add_argument('--goal-thresh', type=int, 
-                        help='threshold for goal region', default=3)
+                        help='threshold for goal region', default=5)
     parser.add_argument('--record', type=int, choices=[0, 1], 
                         help='record or not, default False', default=1)
     args = parser.parse_args()
