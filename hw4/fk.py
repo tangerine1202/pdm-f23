@@ -70,7 +70,6 @@ def your_fk(DH_params : dict, q : list or tuple or np.ndarray, base_pos) -> np.n
         return T
     
     ls_T_0i = [np.eye(4)]
-    #### your code ####
     for dh_i, q_i in zip(DH_params, q):
         # revolute joint rotate about z
         T_q = r_mat_to_T(R.from_euler('z', q_i).as_matrix())
@@ -80,9 +79,9 @@ def your_fk(DH_params : dict, q : list or tuple or np.ndarray, base_pos) -> np.n
         T_a = t_vec_to_T(np.array([dh_i['a'], 0, 0]))
         # alpha rotate about x
         T_alpha = r_mat_to_T(R.from_euler('x', dh_i['alpha']).as_matrix())
-
         # pose of frame i in frame i-1
         T_i = T_q @ T_d @ T_a @ T_alpha
+
         # pose of frame i in frame 0
         T_0i = ls_T_0i[-1] @ T_i
         ls_T_0i.append(T_0i)
