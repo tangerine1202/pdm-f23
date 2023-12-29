@@ -56,14 +56,51 @@ def your_fk(DH_params : dict, q : list or tuple or np.ndarray, base_pos) -> np.n
     # ---          Try to implement `your_fk` function without using any pybullet  --- #
     # ---          API. (20% for accuracy)                                         --- #
     # -------------------------------------------------------------------------------- #
+
+    def r_mat_to_T(r_mat):
+        assert r_mat.shape == (3,3)
+        T = np.eye(4)
+        T[:3, :3] = r_mat
+        return T
     
+    def t_vec_to_T(t_vec):
+        assert t_vec.shape == (3,)
+        T = np.eye(4)
+        T[:3, 3] = t_vec
+        return T
+    
+    ls_T_0i = [np.eye(4)]
     #### your code ####
+    for dh_i, q_i in zip(DH_params, q):
+        # revolute joint rotate about z
+        T_q = r_mat_to_T(R.from_euler('z', q_i).as_matrix())
+        # d move along z
+        T_d = t_vec_to_T(np.array([0, 0, dh_i['d']]))
+        # a move along x
+        T_a = t_vec_to_T(np.array([dh_i['a'], 0, 0]))
+        # alpha rotate about x
+        T_alpha = r_mat_to_T(R.from_euler('x', dh_i['alpha']).as_matrix())
+
+        # pose of frame i in frame i-1
+        T_i = T_q @ T_d @ T_a @ T_alpha
+        # pose of frame i in frame 0
+        T_0i = ls_T_0i[-1] @ T_i
+        ls_T_0i.append(T_0i)
+
+    # Transformation
+    T_0n = ls_T_0i[-1]
+    A = A @ T_0n
+
+    # Jacobian
+    for i in range(len(q)):
+        T_0i = ls_T_0i[i]
+
+        z_0i = T_0i[:3, 2]
+        p_in = T_0n[:3, 3] - T_0i[:3, 3]
+
+        jacobian[:3, i] = np.cross(z_0i, p_in)
+        jacobian[3:, i] = z_0i
     
-
-    # A = ? # may be more than one line
-    # jacobian = ? # may be more than one line
-
-    raise NotImplementedError
     # hint : 
     # https://automaticaddison.com/the-ultimate-guide-to-jacobian-matrices-for-robotics/
     
