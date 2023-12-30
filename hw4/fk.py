@@ -71,16 +71,25 @@ def your_fk(DH_params : dict, q : list or tuple or np.ndarray, base_pos) -> np.n
     
     ls_T_0i = [np.eye(4)]
     for dh_i, q_i in zip(DH_params, q):
-        # revolute joint rotate about z
-        T_q = r_mat_to_T(R.from_euler('z', q_i).as_matrix())
-        # d move along z
-        T_d = t_vec_to_T(np.array([0, 0, dh_i['d']]))
-        # a move along x
-        T_a = t_vec_to_T(np.array([dh_i['a'], 0, 0]))
-        # alpha rotate about x
-        T_alpha = r_mat_to_T(R.from_euler('x', dh_i['alpha']).as_matrix())
-        # pose of frame i in frame i-1
-        T_i = T_q @ T_d @ T_a @ T_alpha
+        d, a, alpha = dh_i['d'], dh_i['a'], dh_i['alpha']
+
+        # # revolute joint rotate about z
+        # T_q = r_mat_to_T(R.from_euler('z', q_i).as_matrix())
+        # # d move along z
+        # T_d = t_vec_to_T(np.array([0, 0, d]))
+        # # a move along x
+        # T_a = t_vec_to_T(np.array([a, 0, 0]))
+        # # alpha rotate about x
+        # T_alpha = r_mat_to_T(R.from_euler('x', alpha).as_matrix())
+        # # pose of frame i in frame i-1
+        # T_i = T_q @ T_d @ T_a @ T_alpha
+
+        T_i = np.array([
+            [np.cos(q_i), -np.sin(q_i)*np.cos(alpha),  np.sin(q_i)*np.sin(alpha), a*np.cos(q_i)],
+            [np.sin(q_i),  np.cos(q_i)*np.cos(alpha), -np.cos(q_i)*np.sin(alpha), a*np.sin(q_i)],
+            [0,            np.sin(alpha),              np.cos(alpha),             d],
+            [0, 0, 0, 1]
+        ])
 
         # pose of frame i in frame 0
         T_0i = ls_T_0i[-1] @ T_i
