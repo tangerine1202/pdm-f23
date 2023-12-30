@@ -81,9 +81,9 @@ def your_fk(DH_params : dict, q : list or tuple or np.ndarray, base_pos) -> np.n
         # T_a = t_vec_to_T(np.array([a, 0, 0]))
         # # alpha rotate about x
         # T_alpha = r_mat_to_T(R.from_euler('x', alpha).as_matrix())
+
         # # pose of frame i in frame i-1
         # T_i = T_q @ T_d @ T_a @ T_alpha
-
         T_i = np.array([
             [np.cos(q_i), -np.sin(q_i)*np.cos(alpha),  np.sin(q_i)*np.sin(alpha), a*np.cos(q_i)],
             [np.sin(q_i),  np.cos(q_i)*np.cos(alpha), -np.cos(q_i)*np.sin(alpha), a*np.sin(q_i)],
