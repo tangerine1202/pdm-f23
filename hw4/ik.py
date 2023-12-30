@@ -81,13 +81,14 @@ def your_ik(robot_id, new_pose : list or tuple or np.ndarray,
         raise ValueError(f'new_pose should be 6d or 7d, but get {len(new_pose)}d')
 
     DH_params = get_ur5_DH_params()
-    lr = 1
+    # lr = 1
 
     for i in range(max_iters):
         tmp_pose_7d, J = your_fk(DH_params, tmp_q, base_pos)
         tmp_pose_6d = np.array(pose_7d_to_6d(tmp_pose_7d))
+
         delta_q = J.T @ pinv(J @ J.T) @ (tmp_pose_6d - new_pose_6d)
-        tmp_q = tmp_q - lr * delta_q
+        tmp_q = tmp_q - delta_q
 
         if np.linalg.norm(delta_q) < stop_thresh:
             break
