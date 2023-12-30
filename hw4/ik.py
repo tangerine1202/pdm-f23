@@ -73,6 +73,28 @@ def your_ik(robot_id, new_pose : list or tuple or np.ndarray,
     # -------------------------------------------------------------------------------- #
     
     #### your code ####
+    if len(new_pose) == 6:
+        new_pose_6d = np.array(new_pose)
+    elif len(new_pose) == 7:
+        new_pose_6d = np.array(pose_7d_to_6d(new_pose))
+    else:
+        raise ValueError(f'new_pose should be 6d or 7d, but get {len(new_pose)}d')
+
+    DH_params = get_ur5_DH_params()
+    lr = 1
+
+    for i in range(max_iters):
+        tmp_pose_7d, J = your_fk(DH_params, tmp_q, base_pos)
+        tmp_pose_6d = np.array(pose_7d_to_6d(tmp_pose_7d))
+        delta_q = J.T @ pinv(J @ J.T) @ (tmp_pose_6d - new_pose_6d)
+        tmp_q = tmp_q - lr * delta_q
+
+        if np.linalg.norm(delta_q) < stop_thresh:
+            break
+    
+    # print(f'delta_pose: {np.linalg.norm(tmp_pose_6d - new_pose_6d):.4f}, '
+    #       f'delta_q: {np.linalg.norm(delta_q):.4f}')
+    # )
 
     # TODO: update tmp_q
     # tmp_q = ? # may be more than one line
@@ -83,8 +105,6 @@ def your_ik(robot_id, new_pose : list or tuple or np.ndarray,
     # 3. You may use some hyper parameters (i.e., step rate) in optimization loops
 
     ###################
-    
-    raise NotImplementedError
 
     return list(tmp_q) # 6 DoF
 
