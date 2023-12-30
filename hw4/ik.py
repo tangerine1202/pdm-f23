@@ -47,7 +47,7 @@ def pybullet_ik(robot_id, new_pose : list or tuple or np.ndarray,
 def your_ik(robot_id, new_pose : list or tuple or np.ndarray, 
                 base_pos, max_iters : int=1000, stop_thresh : float=.001):
 
-
+    # return pybullet_ik(robot_id, new_pose, max_iters, stop_thresh, base_pos)
 
     joint_limits = np.asarray([
             [-3*np.pi/2, -np.pi/2], # joint1
@@ -89,6 +89,10 @@ def your_ik(robot_id, new_pose : list or tuple or np.ndarray,
 
         delta_q = J.T @ pinv(J @ J.T) @ (tmp_pose_6d - new_pose_6d)
         tmp_q = tmp_q - delta_q
+
+        # limit the joint angle
+        for j in range(6):
+            tmp_q[j] = np.clip(tmp_q[j], joint_limits[j][0], joint_limits[j][1])
 
         if np.linalg.norm(delta_q) < stop_thresh:
             break
