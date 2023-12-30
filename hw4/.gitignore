@@ -1,1 +1,6 @@
 *__pycache__/
+
+# transporter network
+ravens/block-insertion-easy-test/*
+ravens/checkpoints/*
+ravens/block-insertion-*.pkl
