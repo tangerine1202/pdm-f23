@@ -87,6 +87,9 @@ def your_ik(robot_id, new_pose : list or tuple or np.ndarray,
         tmp_pose_7d, J = your_fk(DH_params, tmp_q, base_pos)
         tmp_pose_6d = np.array(pose_7d_to_6d(tmp_pose_7d))
 
+        if np.linalg.norm(tmp_pose_6d - new_pose_6d) < stop_thresh:
+            break
+
         delta_q = J.T @ pinv(J @ J.T) @ (tmp_pose_6d - new_pose_6d)
         tmp_q = tmp_q - delta_q
 
@@ -94,14 +97,10 @@ def your_ik(robot_id, new_pose : list or tuple or np.ndarray,
         for j in range(6):
             tmp_q[j] = np.clip(tmp_q[j], joint_limits[j][0], joint_limits[j][1])
 
-        if np.linalg.norm(delta_q) < stop_thresh:
-            break
-    
-    # print(f'delta_pose: {np.linalg.norm(tmp_pose_6d - new_pose_6d):.4f}, '
-    #       f'delta_q: {np.linalg.norm(delta_q):.4f}')
+    # print(
+    #     f'iter: {i}, '
+    #     f'delta_pose: {np.linalg.norm(tmp_pose_6d - new_pose_6d):.4f}, '
     # )
-
-    # TODO: update tmp_q
     # tmp_q = ? # may be more than one line
 
     # hint : 
